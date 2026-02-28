@@ -29,6 +29,7 @@ const Charts = {
         this.renderSP500();
         this.renderCPI();
         this.renderVIX();
+        this.renderYieldCurve();
     },
 
     // Helper: split data into confirmed and nowcast segments for a dual-line look
@@ -549,6 +550,69 @@ const Charts = {
                     y: {
                         ...CONFIG.CHART_DEFAULTS.scales.y,
                         title: { display: true, text: 'VIX Level', color: '#6b7084', font: { size: 11 } },
+                    },
+                },
+            },
+        });
+    },
+
+    renderYieldCurve() {
+        const data = DataStore.processed.yieldCurve;
+        if (!data || data.length === 0) return;
+
+        this.destroy('chart-yieldcurve');
+        const ctx = document.getElementById('chart-yieldcurve').getContext('2d');
+
+        this.instances['chart-yieldcurve'] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => d.date),
+                datasets: [
+                    {
+                        label: '10Y-2Y Spread (%)',
+                        data: data.map(d => d.value),
+                        borderColor: CONFIG.COLORS.purple,
+                        backgroundColor: data.map(d =>
+                            d.value >= 0 ? 'rgba(52, 211, 153, 0.08)' : 'rgba(248, 113, 113, 0.08)'
+                        ),
+                        fill: true,
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        tension: 0.1,
+                    },
+                    {
+                        label: '20-Day MA',
+                        data: data.map(d => d.ma20),
+                        borderColor: CONFIG.COLORS.yellow,
+                        borderWidth: 1.5,
+                        borderDash: [5, 5],
+                        pointRadius: 0,
+                        tension: 0.1,
+                    },
+                ],
+            },
+            options: {
+                ...this.getBaseOptions(),
+                plugins: {
+                    ...CONFIG.CHART_DEFAULTS.plugins,
+                    annotation: {
+                        annotations: {
+                            zero: {
+                                type: 'line',
+                                yMin: 0,
+                                yMax: 0,
+                                borderColor: CONFIG.COLORS.red,
+                                borderWidth: 2,
+                                label: { content: 'Inversion Line', display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
+                            },
+                        },
+                    },
+                },
+                scales: {
+                    x: { ...CONFIG.CHART_DEFAULTS.scales.x },
+                    y: {
+                        ...CONFIG.CHART_DEFAULTS.scales.y,
+                        title: { display: true, text: 'Spread (%)', color: '#6b7084', font: { size: 11 } },
                     },
                 },
             },

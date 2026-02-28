@@ -14,6 +14,8 @@ const CONFIG = {
         CAPE: 'MULTPL/SHILLER_PE_RATIO_MONTH',
         // Initial Jobless Claims (weekly) — leading indicator for unemployment
         ICSA: 'ICSA',
+        // 10-Year minus 2-Year Treasury spread (yield curve)
+        T10Y2Y: 'T10Y2Y',
     },
 
     // Publication lags in months (how long after the reference period
@@ -25,6 +27,7 @@ const CONFIG = {
         CPI: 2,         // released ~2 months after reference month
         EQUITY_ALLOC: 1, // 3-month FRED lag but we nowcast, so treat as ~1 month
         CAPE: 2,        // derived from S&P + CPI, so limited by CPI lag
+        YIELD_CURVE: 0, // real-time daily data
     },
 
     // Chart colors
@@ -53,6 +56,7 @@ const CONFIG = {
         ALLOC_HIGH: 45,
         UNEMPLOYMENT_MA_MONTHS: 12,
         SP500_MA_DAYS: 200,
+        YIELD_CURVE_INVERSION: 0, // spread below 0 = inverted = bearish
     },
 
     // Default chart options

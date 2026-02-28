@@ -17,6 +17,12 @@
     document.getElementById('fred-api-key').addEventListener('keydown', e => {
         if (e.key === 'Enter') loadAllData();
     });
+
+    // Restore API key from localStorage
+    const savedKey = localStorage.getItem('fred_api_key');
+    if (savedKey) {
+        document.getElementById('fred-api-key').value = savedKey;
+    }
 })();
 
 // Global: load all data
@@ -29,6 +35,7 @@ async function loadAllData() {
         return;
     }
     keyInput.style.borderColor = '';
+    localStorage.setItem('fred_api_key', key);
 
     const loading = document.getElementById('loading');
     const loadBtn = document.getElementById('load-data-btn');
@@ -129,6 +136,16 @@ function renderDataTable(series) {
             rows = data.map(d => [d.date, d.value.toFixed(1), d.nowcast ? 'Nowcast' : 'FRED']);
             break;
         }
+        case 'yieldcurve': {
+            columns = ['Date', '10Y-2Y Spread (%)', '20-Day MA (%)'];
+            const data = DataStore.processed.yieldCurve || [];
+            rows = data.slice(-500).map(d => [
+                d.date,
+                d.value.toFixed(2),
+                d.ma20 !== null ? d.ma20.toFixed(2) : '—',
+            ]);
+            break;
+        }
         case 'strategy': {
             columns = ['Indicator', 'Signal', 'Value'];
             const signals = Strategy.computeSignals();
@@ -138,6 +155,7 @@ function renderDataTable(series) {
                 ['VIX', signals.vix, signals.vixDetail],
                 ['CAPE', signals.cape, signals.capeDetail],
                 ['Allocation', signals.allocation, signals.allocationDetail],
+                ['Yield Curve', signals.yieldCurve, signals.yieldCurveDetail],
                 ['Composite', signals.composite, signals.regime],
             ];
             rows = items
@@ -154,6 +172,7 @@ function renderDataTable(series) {
                 ['CPI', DataStore.getLatest('cpi')],
                 ['VIX', DataStore.getLatest('vix')],
                 ['Equity Allocation', DataStore.getLatest('equityAlloc')],
+                ['Yield Curve (10Y-2Y)', DataStore.getLatest('yieldCurve')],
                 ['CAPE (approx)', DataStore.getLatest('cape')],
             ];
             rows = summaries

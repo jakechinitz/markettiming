@@ -127,6 +127,17 @@
                     <canvas id="chart-vix"></canvas>
                 </div>
             </section>
+            <!-- Yield Curve -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>8. Treasury Yield Curve Spread (10Y - 2Y)</h2>
+                    <p class="chart-description">The difference between 10-year and 2-year Treasury yields. An inverted yield curve (spread below 0) has preceded every U.S. recession since 1970.</p>
+                    <div class="source-link">Source: FRED series T10Y2Y</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-yieldcurve"></canvas>
+                </div>
+            </section>
         </div>
 
         <!-- STRATEGY TAB -->
@@ -161,6 +172,10 @@
                                 <span class="rule-name">5. Investor Allocation <span class="nowcast-badge">3mo lag, nowcast via S&P</span></span>
                                 <span class="rule-desc">Equity allocation below 35% → +1, 35-45% → 0, above 45% → -1</span>
                             </div>
+                            <div class="rule">
+                                <span class="rule-name">6. Yield Curve (10Y-2Y) <span class="nowcast-badge">REAL-TIME</span></span>
+                                <span class="rule-desc">Spread above 0% (normal) → +1, below 0% (inverted) → -1</span>
+                            </div>
                         </div>
                     </div>
 
@@ -182,11 +197,11 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td>+5 to +4</td><td class="signal-bullish">Strong Buy</td><td>100%</td></tr>
-                                <tr><td>+3 to +2</td><td class="signal-bullish">Buy</td><td>80%</td></tr>
-                                <tr><td>+1 to 0</td><td class="signal-neutral">Neutral</td><td>60%</td></tr>
+                                <tr><td>+6 to +5</td><td class="signal-bullish">Strong Buy</td><td>100%</td></tr>
+                                <tr><td>+4 to +3</td><td class="signal-bullish">Buy</td><td>80%</td></tr>
+                                <tr><td>+2 to 0</td><td class="signal-neutral">Neutral</td><td>60%</td></tr>
                                 <tr><td>-1 to -2</td><td class="signal-bearish">Reduce</td><td>40%</td></tr>
-                                <tr><td>-3 to -5</td><td class="signal-bearish">Defensive</td><td>20%</td></tr>
+                                <tr><td>-3 to -6</td><td class="signal-bearish">Defensive</td><td>20%</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -223,6 +238,7 @@
                         <option value="cpi">CPI / Inflation</option>
                         <option value="vix">VIX</option>
                         <option value="allocation">Investor Equity Allocation</option>
+                        <option value="yieldcurve">Yield Curve (10Y-2Y)</option>
                         <option value="strategy">Strategy Signals</option>
                     </select>
                     <button id="download-csv" onclick="downloadCSV()">Download CSV</button>
@@ -283,6 +299,13 @@
                 </div>
 
                 <div class="about-card">
+                    <h3>8. Treasury Yield Curve Spread (10Y - 2Y)</h3>
+                    <p>The yield curve spread measures the difference between long-term (10-year) and short-term (2-year) Treasury yields. Under normal conditions, long-term rates are higher than short-term rates, reflecting the term premium for lending money further into the future.</p>
+                    <p>When the curve <strong>inverts</strong> (spread goes negative), it signals that bond markets expect future rate cuts — typically because they anticipate an economic downturn. An inverted yield curve has preceded every U.S. recession since 1970, though with variable lead times (6-24 months).</p>
+                    <p><strong>FRED Series:</strong> T10Y2Y (10-Year Treasury Constant Maturity Minus 2-Year Treasury Constant Maturity)</p>
+                </div>
+
+                <div class="about-card">
                     <h3>Nowcasting & Publication Lags</h3>
                     <p>FRED data has significant publication lags. To provide the most current signal, this dashboard <strong>nowcasts</strong> lagged series:</p>
                     <p><strong>Equity Allocation:</strong> FRED's Z.1 data lags ~3 months. We estimate current allocation by applying S&P 500 price changes to the last known reading: if equities were X% of the portfolio and the S&P moved by Y%, the new equity share is recomputed assuming non-equity assets are unchanged.</p>
@@ -294,7 +317,7 @@
                 <div class="about-card">
                     <h3>Lag-Aware Backtesting</h3>
                     <p>The backtest accounts for realistic publication delays. At each monthly decision point, the strategy only uses data that would have actually been available:</p>
-                    <p><strong>S&P 500 / VIX:</strong> Real-time (0 months lag) · <strong>Unemployment:</strong> 1 month lag · <strong>CPI / CAPE:</strong> 2 months lag · <strong>Equity Allocation:</strong> 1 month lag (since we're nowcasting)</p>
+                    <p><strong>S&P 500 / VIX / Yield Curve:</strong> Real-time (0 months lag) · <strong>Unemployment:</strong> 1 month lag · <strong>CPI / CAPE:</strong> 2 months lag · <strong>Equity Allocation:</strong> 1 month lag (since we're nowcasting)</p>
                     <p>This eliminates look-ahead bias and gives a more honest picture of what an investor could have achieved.</p>
                 </div>
 

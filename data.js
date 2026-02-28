@@ -37,6 +37,7 @@ const DataStore = {
             vix: this.fetchFredSeries(CONFIG.SERIES.VIXCLS, '2000-01-01'),
             equityAlloc: this.fetchFredSeries(CONFIG.SERIES.EQUITY_ALLOC, '1950-01-01'),
             icsa: this.fetchFredSeries(CONFIG.SERIES.ICSA, '2000-01-01'),
+            yieldCurve: this.fetchFredSeries(CONFIG.SERIES.T10Y2Y, '1990-01-01'),
         };
 
         const results = await Promise.allSettled(Object.values(fetches));
@@ -60,6 +61,7 @@ const DataStore = {
         this.processCPI();
         this.processVIX();
         this.processEquityAllocation();
+        this.processYieldCurve();
         this.computeCAPE();
     },
 
@@ -270,6 +272,24 @@ const DataStore = {
         }
 
         this.processed.equityAlloc = processed;
+    },
+
+    processYieldCurve() {
+        const data = this.raw.yieldCurve || [];
+        if (data.length === 0) return;
+
+        // Compute a 20-day moving average to smooth daily noise
+        const maWindow = 20;
+        const withMA = data.map((d, i) => {
+            let ma = null;
+            if (i >= maWindow - 1) {
+                const slice = data.slice(i - maWindow + 1, i + 1);
+                ma = slice.reduce((s, v) => s + v.value, 0) / maWindow;
+            }
+            return { date: d.date, value: d.value, ma20: ma, nowcast: false };
+        });
+
+        this.processed.yieldCurve = withMA;
     },
 
     computeCAPE() {

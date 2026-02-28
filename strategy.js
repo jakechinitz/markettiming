@@ -48,17 +48,24 @@ const Strategy = {
             signals.allocationNowcast = !!alloc.nowcast;
         }
 
+        // 6. Yield curve: 10Y-2Y spread (real-time, no lag)
+        const yc = DataStore.getLatest('yieldCurve');
+        if (yc) {
+            signals.yieldCurve = yc.value > CONFIG.STRATEGY.YIELD_CURVE_INVERSION ? 1 : -1;
+            signals.yieldCurveDetail = `10Y-2Y spread at ${yc.value.toFixed(2)}%`;
+        }
+
         // Composite score
-        const components = ['trend', 'unemployment', 'vix', 'cape', 'allocation'];
+        const components = ['trend', 'unemployment', 'vix', 'cape', 'allocation', 'yieldCurve'];
         const validSignals = components.filter(c => signals[c] !== undefined);
         signals.composite = validSignals.reduce((sum, c) => sum + signals[c], 0);
         signals.maxPossible = validSignals.length;
 
         // Determine regime
-        if (signals.composite >= 4) {
+        if (signals.composite >= 5) {
             signals.regime = 'Strong Buy';
             signals.equityPct = 100;
-        } else if (signals.composite >= 2) {
+        } else if (signals.composite >= 3) {
             signals.regime = 'Buy';
             signals.equityPct = 80;
         } else if (signals.composite >= 0) {
@@ -85,6 +92,7 @@ const Strategy = {
             { name: 'Volatility Regime', value: signals.vix, detail: signals.vixDetail, nowcast: false },
             { name: 'Valuation (CAPE)', value: signals.cape, detail: signals.capeDetail, nowcast: false },
             { name: 'Investor Allocation', value: signals.allocation, detail: signals.allocationDetail, nowcast: signals.allocationNowcast },
+            { name: 'Yield Curve', value: signals.yieldCurve, detail: signals.yieldCurveDetail, nowcast: false },
         ];
 
         let html = '';
@@ -154,14 +162,21 @@ const Strategy = {
             count++;
         }
 
+        // 6. Yield curve (0 month lag — real-time)
+        const yc = DataStore.getLaggedValue('yieldCurve', dateStr, CONFIG.PUB_LAG.YIELD_CURVE);
+        if (yc) {
+            score += yc.value > CONFIG.STRATEGY.YIELD_CURVE_INVERSION ? 1 : -1;
+            count++;
+        }
+
         return { score, count };
     },
 
     scoreToAllocation(score) {
-        if (score >= 4) return 1.0;
-        if (score >= 2) return 0.8;
+        if (score >= 5) return 1.0;
+        if (score >= 3) return 0.8;
         if (score >= 0) return 0.6;
-        if (score >= -1) return 0.4;
+        if (score >= -2) return 0.4;
         return 0.2;
     },
 
@@ -361,7 +376,7 @@ const Strategy = {
                 <div class="stat-label">Buy & Hold Final Value</div>
                 <div class="stat-value">$${bhFinal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
             </div>
-            <p class="lag-note">Backtest uses publication-lagged data: S&P/VIX real-time, unemployment 1mo, CPI 2mo, allocation 1mo, CAPE 2mo</p>
+            <p class="lag-note">Backtest uses publication-lagged data: S&P/VIX/yield curve real-time, unemployment 1mo, CPI 2mo, allocation 1mo, CAPE 2mo</p>
         `;
     },
 
