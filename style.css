@@ -1,0 +1,566 @@
+/* === Reset & Base === */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --bg-primary: #0f1117;
+    --bg-secondary: #1a1d27;
+    --bg-card: #1e2130;
+    --bg-input: #252838;
+    --border: #2d3048;
+    --text-primary: #e8e9ed;
+    --text-secondary: #9ca0b0;
+    --text-muted: #6b7084;
+    --accent: #4f8ff7;
+    --accent-hover: #3a7be0;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --chart-height: 400px;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* === Header === */
+header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 1.5rem 2rem 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.header-content {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.subtitle {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+nav {
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    gap: 0;
+    margin-top: 1rem;
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 0.75rem 1.25rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.tab-btn:hover {
+    color: var(--text-primary);
+}
+
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+/* === Main === */
+main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem 2rem 3rem;
+}
+
+/* === API Key Banner === */
+.api-banner {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.banner-content {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.banner-content span {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+#fred-api-key {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    width: 280px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+#fred-api-key:focus {
+    border-color: var(--accent);
+}
+
+#load-data-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+#load-data-btn:hover {
+    background: var(--accent-hover);
+}
+
+#load-data-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* === Loading === */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 2rem;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.loading.hidden {
+    display: none;
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* === Tab Content === */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* === Chart Sections === */
+.chart-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.chart-header h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.chart-description {
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    margin-bottom: 0.25rem;
+}
+
+.source-link {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.chart-container {
+    position: relative;
+    height: var(--chart-height);
+    margin-top: 1rem;
+}
+
+.chart-container canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* === Strategy Tab === */
+.strategy-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.strategy-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.signal-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+}
+
+.signal-card.wide {
+    grid-column: 1 / -1;
+}
+
+.signal-card h3 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+}
+
+.rules-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.rule {
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.rule:last-child {
+    border-bottom: none;
+}
+
+.rule-name {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.rule-desc {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.125rem;
+}
+
+/* Current signals */
+#current-signals .signal-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8125rem;
+}
+
+#current-signals .signal-row:last-child {
+    border-bottom: none;
+}
+
+.signal-value {
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+}
+
+.signal-value.positive {
+    background: rgba(52, 211, 153, 0.15);
+    color: var(--green);
+}
+
+.signal-value.negative {
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--red);
+}
+
+.signal-value.neutral {
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--yellow);
+}
+
+.composite-score {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 2px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 700;
+    font-size: 0.9375rem;
+}
+
+/* Allocation table */
+.allocation-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+
+.allocation-table th,
+.allocation-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.allocation-table th {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.signal-bullish {
+    color: var(--green);
+    font-weight: 600;
+}
+
+.signal-bearish {
+    color: var(--red);
+    font-weight: 600;
+}
+
+.signal-neutral {
+    color: var(--yellow);
+    font-weight: 600;
+}
+
+/* Strategy stats */
+.strategy-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+}
+
+.stat-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+}
+
+.stat-card .stat-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.stat-card .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-top: 0.25rem;
+}
+
+.no-data {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    text-align: center;
+    padding: 1rem;
+}
+
+/* === Data Tab === */
+.data-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.data-controls {
+    display: flex;
+    gap: 0.75rem;
+    margin: 1rem 0;
+    flex-wrap: wrap;
+}
+
+.data-controls select,
+.data-controls button {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    cursor: pointer;
+}
+
+.data-controls button:hover {
+    border-color: var(--accent);
+}
+
+.table-wrapper {
+    overflow-x: auto;
+    margin-top: 1rem;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+#data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+}
+
+#data-table th,
+#data-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+
+#data-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    z-index: 1;
+}
+
+#data-table td:first-child,
+#data-table th:first-child {
+    text-align: left;
+}
+
+#data-table tbody tr:hover {
+    background: var(--bg-input);
+}
+
+/* === About Tab === */
+.about-section {
+    max-width: 800px;
+}
+
+.about-section h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.about-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.about-card h3 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.about-card p {
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    margin-bottom: 0.5rem;
+}
+
+.about-card p:last-child {
+    margin-bottom: 0;
+}
+
+/* === Footer === */
+footer {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    border-top: 1px solid var(--border);
+}
+
+/* === Responsive === */
+@media (max-width: 768px) {
+    header {
+        padding: 1rem 1rem 0;
+    }
+
+    main {
+        padding: 1rem;
+    }
+
+    .strategy-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .banner-content {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #fred-api-key {
+        width: 100%;
+    }
+
+    nav {
+        overflow-x: auto;
+    }
+
+    :root {
+        --chart-height: 300px;
+    }
+}

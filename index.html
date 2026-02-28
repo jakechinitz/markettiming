@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Timing Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>Market Timing Dashboard</h1>
+            <p class="subtitle">Quantitative indicators for equity market analysis</p>
+        </div>
+        <nav>
+            <button class="tab-btn active" data-tab="charts">Charts</button>
+            <button class="tab-btn" data-tab="strategy">Strategy</button>
+            <button class="tab-btn" data-tab="data">Data</button>
+            <button class="tab-btn" data-tab="about">About</button>
+        </nav>
+    </header>
+
+    <main>
+        <!-- API Key Banner -->
+        <div id="api-key-banner" class="api-banner">
+            <div class="banner-content">
+                <span>Enter your free <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">FRED API key</a> to load live data:</span>
+                <input type="text" id="fred-api-key" placeholder="Your FRED API key">
+                <button id="load-data-btn" onclick="loadAllData()">Load Data</button>
+            </div>
+        </div>
+
+        <!-- Loading indicator -->
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <span>Loading data from FRED...</span>
+        </div>
+
+        <!-- CHARTS TAB -->
+        <div id="tab-charts" class="tab-content active">
+            <!-- Investor Equity Allocation -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>1. Average Investor Equity Allocation vs Future Returns</h2>
+                    <p class="chart-description">The single greatest predictor of future stock market returns. Higher equity allocation → lower future 10-year returns.</p>
+                    <div class="source-link">Source: <a href="https://www.philosophicaleconomics.com/2013/12/the-single-greatest-predictor-of-future-stock-market-returns/" target="_blank">Philosophical Economics</a> | Fed Z.1 Flow of Funds</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-allocation"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-allocation-scatter"></canvas>
+                </div>
+            </section>
+
+            <!-- Shiller CAPE -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>2. Shiller CAPE Ratio</h2>
+                    <p class="chart-description">Cyclically Adjusted Price-to-Earnings ratio. Current price divided by the average of 10 years of inflation-adjusted earnings.</p>
+                    <div class="source-link">Source: Robert Shiller | FRED</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-cape"></canvas>
+                </div>
+            </section>
+
+            <!-- P/IE -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>3. P/IE — Price to Inflation-Adjusted Earnings</h2>
+                    <p class="chart-description">Standard P/E overstates earnings during inflation due to FIFO inventory accounting and historical-cost depreciation. P/IE corrects for this.</p>
+                    <div class="source-link">Source: <a href="https://canvas.osam.com/Commentary/BlogPost?Permalink=the-earnings-mirage" target="_blank">OSAM — The Earnings Mirage</a></div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-pie"></canvas>
+                </div>
+            </section>
+
+            <!-- Unemployment -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>4. Unemployment Rate & Moving Average</h2>
+                    <p class="chart-description">When unemployment crosses above its 12-month moving average, recessions often follow (Sahm Rule variant).</p>
+                    <div class="source-link">Source: FRED series UNRATE</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-unemployment"></canvas>
+                </div>
+            </section>
+
+            <!-- S&P 500 + 200-day MA -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>5. S&P 500 & 200-Day Moving Average</h2>
+                    <p class="chart-description">Classic trend following signal. When price is above the 200-day MA, the market is in an uptrend.</p>
+                    <div class="source-link">Source: FRED series SP500</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-sp500"></canvas>
+                </div>
+            </section>
+
+            <!-- CPI -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>6. CPI — Consumer Price Index & Inflation Rate</h2>
+                    <p class="chart-description">Year-over-year inflation rate derived from CPI for All Urban Consumers.</p>
+                    <div class="source-link">Source: FRED series CPIAUCSL</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-cpi"></canvas>
+                </div>
+            </section>
+
+            <!-- Volatility -->
+            <section class="chart-section">
+                <div class="chart-header">
+                    <h2>7. VIX Volatility Index & Trend Following Regimes</h2>
+                    <p class="chart-description">The CBOE Volatility Index with regime thresholds. Low vol environments favor trend-following; high vol signals risk-off.</p>
+                    <div class="source-link">Source: FRED series VIXCLS</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="chart-vix"></canvas>
+                </div>
+            </section>
+        </div>
+
+        <!-- STRATEGY TAB -->
+        <div id="tab-strategy" class="tab-content">
+            <section class="strategy-section">
+                <div class="chart-header">
+                    <h2>Composite Market Timing Strategy</h2>
+                    <p class="chart-description">A rules-based approach combining multiple signals into a single composite score for equity allocation.</p>
+                </div>
+
+                <div class="strategy-grid">
+                    <div class="signal-card">
+                        <h3>Strategy Rules</h3>
+                        <div class="rules-list">
+                            <div class="rule">
+                                <span class="rule-name">1. Trend (200-Day MA)</span>
+                                <span class="rule-desc">S&P 500 above 200-day MA → +1, below → -1</span>
+                            </div>
+                            <div class="rule">
+                                <span class="rule-name">2. Unemployment Trend</span>
+                                <span class="rule-desc">Unemployment below 12-mo MA → +1, above → -1</span>
+                            </div>
+                            <div class="rule">
+                                <span class="rule-name">3. Volatility Regime</span>
+                                <span class="rule-desc">VIX below 20 → +1, 20-30 → 0, above 30 → -1</span>
+                            </div>
+                            <div class="rule">
+                                <span class="rule-name">4. Valuation (CAPE)</span>
+                                <span class="rule-desc">CAPE below 20 → +1, 20-30 → 0, above 30 → -1</span>
+                            </div>
+                            <div class="rule">
+                                <span class="rule-name">5. Investor Allocation</span>
+                                <span class="rule-desc">Equity allocation below 35% → +1, 35-45% → 0, above 45% → -1</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="signal-card">
+                        <h3>Current Signals</h3>
+                        <div id="current-signals">
+                            <p class="no-data">Load data to see current signals</p>
+                        </div>
+                    </div>
+
+                    <div class="signal-card wide">
+                        <h3>Allocation Model</h3>
+                        <table class="allocation-table">
+                            <thead>
+                                <tr>
+                                    <th>Composite Score</th>
+                                    <th>Signal</th>
+                                    <th>Equity Allocation</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>+5 to +4</td><td class="signal-bullish">Strong Buy</td><td>100%</td></tr>
+                                <tr><td>+3 to +2</td><td class="signal-bullish">Buy</td><td>80%</td></tr>
+                                <tr><td>+1 to 0</td><td class="signal-neutral">Neutral</td><td>60%</td></tr>
+                                <tr><td>-1 to -2</td><td class="signal-bearish">Reduce</td><td>40%</td></tr>
+                                <tr><td>-3 to -5</td><td class="signal-bearish">Defensive</td><td>20%</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="chart-strategy"></canvas>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="chart-backtest"></canvas>
+                </div>
+
+                <div id="strategy-stats" class="strategy-stats">
+                    <p class="no-data">Load data to see backtest results</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- DATA TAB -->
+        <div id="tab-data" class="tab-content">
+            <section class="data-section">
+                <div class="chart-header">
+                    <h2>Raw Data</h2>
+                    <p class="chart-description">All indicator data in tabular form. Download as CSV for your own analysis.</p>
+                </div>
+
+                <div class="data-controls">
+                    <select id="data-series-select">
+                        <option value="all">All Series</option>
+                        <option value="sp500">S&P 500</option>
+                        <option value="cape">Shiller CAPE</option>
+                        <option value="unemployment">Unemployment Rate</option>
+                        <option value="cpi">CPI / Inflation</option>
+                        <option value="vix">VIX</option>
+                        <option value="allocation">Investor Equity Allocation</option>
+                        <option value="strategy">Strategy Signals</option>
+                    </select>
+                    <button id="download-csv" onclick="downloadCSV()">Download CSV</button>
+                    <button id="copy-data" onclick="copyData()">Copy to Clipboard</button>
+                </div>
+
+                <div class="table-wrapper">
+                    <table id="data-table">
+                        <thead id="data-thead"></thead>
+                        <tbody id="data-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <!-- ABOUT TAB -->
+        <div id="tab-about" class="tab-content">
+            <section class="about-section">
+                <h2>About This Dashboard</h2>
+
+                <div class="about-card">
+                    <h3>1. Average Investor Equity Allocation</h3>
+                    <p>From Jesse Livermore's <a href="https://www.philosophicaleconomics.com/2013/12/the-single-greatest-predictor-of-future-stock-market-returns/" target="_blank">Philosophical Economics</a>: the percentage of financial assets that U.S. households allocate to equities is the single best predictor of subsequent 10-year real returns. The metric comes from the Federal Reserve's Z.1 Flow of Funds report.</p>
+                    <p><strong>Formula:</strong> Equity Allocation = Household Equity Holdings / (Equity Holdings + Debt Securities + Deposits + Other Financial Assets)</p>
+                    <p><strong>FRED Series:</strong> Computed from multiple Z.1 series. Proxy: BOGZ1FL153064005Q (Corporate equities and mutual fund shares as % of financial assets)</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>2. Shiller CAPE Ratio</h3>
+                    <p>Robert Shiller's Cyclically Adjusted Price-to-Earnings ratio smooths earnings over 10 years to remove business cycle effects. It has historically mean-reverted around ~16-17.</p>
+                    <p><strong>Formula:</strong> CAPE = Current Real Price / Average Real Earnings over prior 10 years</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>3. P/IE — Price to Inflation-Adjusted Earnings</h3>
+                    <p>From O'Shaughnessy Asset Management's <a href="https://canvas.osam.com/Commentary/BlogPost?Permalink=the-earnings-mirage" target="_blank">"The Earnings Mirage"</a>: standard reported earnings overstate true economic earnings during inflationary periods because of FIFO inventory accounting (understates cost of goods sold) and historical-cost depreciation (understates replacement cost). P/IE corrects for these effects.</p>
+                    <p><strong>Adjustment:</strong> Real Earnings = Reported Earnings − Inventory Inflation Gain − Depreciation Shortfall</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>4. Unemployment Rate & Moving Average</h3>
+                    <p>The unemployment rate relative to its 12-month moving average serves as a recession indicator. When unemployment crosses above its trend, it signals economic deterioration. Related to the Sahm Rule.</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>5. S&P 500 & 200-Day Moving Average</h3>
+                    <p>The most widely followed trend indicator. When the S&P 500 trades above its 200-day moving average, the trend is up. Below signals a potential bear market. Simple but historically effective at reducing drawdowns.</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>6. CPI & Inflation</h3>
+                    <p>The Consumer Price Index for All Urban Consumers (CPI-U) tracks the cost of a basket of goods. Year-over-year changes measure the inflation rate, which affects both valuations and monetary policy.</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>7. VIX & Volatility Regimes</h3>
+                    <p>The CBOE Volatility Index measures implied volatility from S&P 500 options. Low-volatility regimes (VIX &lt; 20) tend to favor trend-following strategies. High-volatility spikes (VIX &gt; 30) often coincide with market bottoms but also precede further declines.</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>Data Sources</h3>
+                    <p>All data is pulled in real-time from the <a href="https://fred.stlouisfed.org/" target="_blank">Federal Reserve Economic Data (FRED)</a> API. You need a free API key from FRED to use this dashboard.</p>
+                    <p><a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">Get a free FRED API key →</a></p>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <p>Data sourced from <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> · Updated automatically · Not financial advice</p>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="data.js"></script>
+    <script src="charts.js"></script>
+    <script src="strategy.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
