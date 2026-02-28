@@ -1,6 +1,7 @@
 // FRED API configuration and series definitions
 const CONFIG = {
     FRED_BASE_URL: 'https://api.stlouisfed.org/fred/series/observations',
+    FRED_API_KEY: '840b9537b113f1498ceb08d07a8e7bac',
 
     // FRED series IDs
     SERIES: {

@@ -13,38 +13,17 @@
         });
     });
 
-    // Enter key on API key input triggers load
-    document.getElementById('fred-api-key').addEventListener('keydown', e => {
-        if (e.key === 'Enter') loadAllData();
-    });
-
-    // Restore API key from localStorage
-    const savedKey = localStorage.getItem('fred_api_key');
-    if (savedKey) {
-        document.getElementById('fred-api-key').value = savedKey;
-    }
+    // Auto-load data on page load
+    loadAllData();
 })();
 
 // Global: load all data
 async function loadAllData() {
-    const keyInput = document.getElementById('fred-api-key');
-    const key = keyInput.value.trim();
-    if (!key) {
-        keyInput.focus();
-        keyInput.style.borderColor = '#f87171';
-        return;
-    }
-    keyInput.style.borderColor = '';
-    localStorage.setItem('fred_api_key', key);
-
     const loading = document.getElementById('loading');
-    const loadBtn = document.getElementById('load-data-btn');
     loading.classList.remove('hidden');
-    loadBtn.disabled = true;
-    loadBtn.textContent = 'Loading...';
 
     try {
-        DataStore.setApiKey(key);
+        DataStore.setApiKey(CONFIG.FRED_API_KEY);
         await DataStore.loadAllSeries();
 
         // Render charts
@@ -58,16 +37,10 @@ async function loadAllData() {
 
         // Populate data table
         populateDataTable();
-
-        // Hide banner on success
-        document.getElementById('api-key-banner').style.display = 'none';
     } catch (err) {
         console.error('Error loading data:', err);
-        alert('Error loading data: ' + err.message);
     } finally {
         loading.classList.add('hidden');
-        loadBtn.disabled = false;
-        loadBtn.textContent = 'Load Data';
     }
 }
 
