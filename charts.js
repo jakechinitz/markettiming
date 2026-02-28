@@ -31,6 +31,20 @@ const Charts = {
         this.renderVIX();
     },
 
+    // Helper: split data into confirmed and nowcast segments for a dual-line look
+    splitNowcast(data) {
+        const lastConfirmedIdx = data.reduce((acc, d, i) => d.nowcast ? acc : i, -1);
+        const confirmed = data.map((d, i) => i <= lastConfirmedIdx ? d.value : null);
+        // Overlap by 1 point so the lines connect
+        const nowcast = data.map((d, i) => {
+            if (i >= lastConfirmedIdx && d.nowcast) return d.value;
+            if (i === lastConfirmedIdx) return d.value; // bridge point
+            return null;
+        });
+        const hasNowcast = data.some(d => d.nowcast);
+        return { confirmed, nowcast, hasNowcast };
+    },
+
     renderEquityAllocation() {
         const data = DataStore.processed.equityAlloc;
         if (!data || data.length === 0) return;
@@ -38,20 +52,36 @@ const Charts = {
         this.destroy('chart-allocation');
         const ctx = document.getElementById('chart-allocation').getContext('2d');
 
+        const { confirmed, nowcast, hasNowcast } = this.splitNowcast(data);
+        const datasets = [{
+            label: 'Equity Allocation (%)',
+            data: confirmed,
+            borderColor: CONFIG.COLORS.blue,
+            backgroundColor: 'rgba(79, 143, 247, 0.1)',
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3,
+        }];
+        if (hasNowcast) {
+            datasets.push({
+                label: 'Nowcast',
+                data: nowcast,
+                borderColor: CONFIG.COLORS.nowcast,
+                borderWidth: 2,
+                borderDash: [6, 3],
+                pointRadius: data.map(d => d.nowcast ? 4 : 0),
+                pointBackgroundColor: CONFIG.COLORS.nowcast,
+                tension: 0.3,
+                fill: false,
+            });
+        }
+
         this.instances['chart-allocation'] = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: data.map(d => d.date),
-                datasets: [{
-                    label: 'Equity Allocation (%)',
-                    data: data.map(d => d.value),
-                    borderColor: CONFIG.COLORS.blue,
-                    backgroundColor: 'rgba(79, 143, 247, 0.1)',
-                    fill: true,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.3,
-                }],
+                datasets,
             },
             options: {
                 ...this.getBaseOptions(),
@@ -286,29 +316,45 @@ const Charts = {
         this.destroy('chart-unemployment');
         const ctx = document.getElementById('chart-unemployment').getContext('2d');
 
+        const { confirmed, nowcast, hasNowcast } = this.splitNowcast(data);
+        const datasets = [
+            {
+                label: 'Unemployment Rate (%)',
+                data: confirmed,
+                borderColor: CONFIG.COLORS.blue,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.2,
+            },
+            {
+                label: '12-Month MA',
+                data: data.map(d => d.ma12),
+                borderColor: CONFIG.COLORS.red,
+                borderWidth: 1.5,
+                borderDash: [5, 5],
+                pointRadius: 0,
+                tension: 0.2,
+            },
+        ];
+        if (hasNowcast) {
+            datasets.push({
+                label: 'Nowcast',
+                data: nowcast,
+                borderColor: CONFIG.COLORS.nowcast,
+                borderWidth: 2,
+                borderDash: [6, 3],
+                pointRadius: data.map(d => d.nowcast ? 4 : 0),
+                pointBackgroundColor: CONFIG.COLORS.nowcast,
+                tension: 0.2,
+                fill: false,
+            });
+        }
+
         this.instances['chart-unemployment'] = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: data.map(d => d.date),
-                datasets: [
-                    {
-                        label: 'Unemployment Rate (%)',
-                        data: data.map(d => d.value),
-                        borderColor: CONFIG.COLORS.blue,
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        tension: 0.2,
-                    },
-                    {
-                        label: '12-Month MA',
-                        data: data.map(d => d.ma12),
-                        borderColor: CONFIG.COLORS.red,
-                        borderWidth: 1.5,
-                        borderDash: [5, 5],
-                        pointRadius: 0,
-                        tension: 0.2,
-                    },
-                ],
+                datasets,
             },
             options: {
                 ...this.getBaseOptions(),
@@ -377,20 +423,36 @@ const Charts = {
         this.destroy('chart-cpi');
         const ctx = document.getElementById('chart-cpi').getContext('2d');
 
+        const { confirmed, nowcast, hasNowcast } = this.splitNowcast(inflData);
+        const datasets = [{
+            label: 'YoY Inflation Rate (%)',
+            data: confirmed,
+            borderColor: CONFIG.COLORS.cyan,
+            backgroundColor: inflData.map(d => d.inflationRate >= 0 ? 'rgba(248, 113, 113, 0.1)' : 'rgba(52, 211, 153, 0.1)'),
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.2,
+        }];
+        if (hasNowcast) {
+            datasets.push({
+                label: 'Nowcast',
+                data: nowcast,
+                borderColor: CONFIG.COLORS.nowcast,
+                borderWidth: 2,
+                borderDash: [6, 3],
+                pointRadius: inflData.map(d => d.nowcast ? 4 : 0),
+                pointBackgroundColor: CONFIG.COLORS.nowcast,
+                tension: 0.2,
+                fill: false,
+            });
+        }
+
         this.instances['chart-cpi'] = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: inflData.map(d => d.date),
-                datasets: [{
-                    label: 'YoY Inflation Rate (%)',
-                    data: inflData.map(d => d.inflationRate),
-                    borderColor: CONFIG.COLORS.cyan,
-                    backgroundColor: inflData.map(d => d.inflationRate >= 0 ? 'rgba(248, 113, 113, 0.1)' : 'rgba(52, 211, 153, 0.1)'),
-                    fill: true,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.2,
-                }],
+                datasets,
             },
             options: {
                 ...this.getBaseOptions(),

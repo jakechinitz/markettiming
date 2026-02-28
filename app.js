@@ -96,22 +96,24 @@ function renderDataTable(series) {
             break;
         }
         case 'unemployment': {
-            columns = ['Date', 'Rate (%)', '12-Mo MA (%)'];
+            columns = ['Date', 'Rate (%)', '12-Mo MA (%)', 'Source'];
             const data = DataStore.processed.unemployment || [];
             rows = data.slice(-200).map(d => [
                 d.date,
                 d.value.toFixed(1),
                 d.ma12 !== null ? d.ma12.toFixed(1) : '—',
+                d.nowcast ? 'Nowcast' : 'FRED',
             ]);
             break;
         }
         case 'cpi': {
-            columns = ['Date', 'CPI', 'YoY Inflation (%)'];
+            columns = ['Date', 'CPI', 'YoY Inflation (%)', 'Source'];
             const data = DataStore.processed.cpi || [];
             rows = data.filter(d => d.inflationRate !== null).slice(-200).map(d => [
                 d.date,
                 d.value.toFixed(1),
                 d.inflationRate.toFixed(2),
+                d.nowcast ? 'Nowcast' : 'FRED',
             ]);
             break;
         }
@@ -122,9 +124,9 @@ function renderDataTable(series) {
             break;
         }
         case 'allocation': {
-            columns = ['Date', 'Equity Allocation (%)'];
+            columns = ['Date', 'Equity Allocation (%)', 'Source'];
             const data = DataStore.processed.equityAlloc || [];
-            rows = data.map(d => [d.date, d.value.toFixed(1)]);
+            rows = data.map(d => [d.date, d.value.toFixed(1), d.nowcast ? 'Nowcast' : 'FRED']);
             break;
         }
         case 'strategy': {

@@ -12,10 +12,20 @@ const CONFIG = {
         EQUITY_ALLOC: 'BOGZ1FL153064005Q',
         // For CAPE we use Shiller data via FRED (quarterly, multpl source)
         CAPE: 'MULTPL/SHILLER_PE_RATIO_MONTH',
+        // Initial Jobless Claims (weekly) — leading indicator for unemployment
+        ICSA: 'ICSA',
     },
 
-    // Fallback: Shiller CAPE from a direct CSV endpoint
-    SHILLER_CAPE_URL: 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=SP500&id=CPIAUCSL',
+    // Publication lags in months (how long after the reference period
+    // before the data is actually available to an investor)
+    PUB_LAG: {
+        SP500: 0,       // real-time
+        VIX: 0,         // real-time
+        UNEMPLOYMENT: 1, // released ~1 month after reference month
+        CPI: 2,         // released ~2 months after reference month
+        EQUITY_ALLOC: 1, // 3-month FRED lag but we nowcast, so treat as ~1 month
+        CAPE: 2,        // derived from S&P + CPI, so limited by CPI lag
+    },
 
     // Chart colors
     COLORS: {
@@ -28,6 +38,7 @@ const CONFIG = {
         cyan: '#22d3ee',
         gray: '#6b7084',
         white: '#e8e9ed',
+        nowcast: '#ff79c6',
         gridLine: 'rgba(45, 48, 72, 0.5)',
         gridLineLight: 'rgba(45, 48, 72, 0.3)',
     },

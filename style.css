@@ -417,6 +417,30 @@ main {
     padding: 1rem;
 }
 
+/* Nowcast badge */
+.nowcast-badge {
+    display: inline-block;
+    background: rgba(255, 121, 198, 0.15);
+    color: #ff79c6;
+    font-size: 0.5625rem;
+    font-weight: 700;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+    vertical-align: middle;
+    margin-left: 0.35rem;
+}
+
+/* Lag note under backtest stats */
+.lag-note {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font-size: 0.6875rem;
+    text-align: center;
+    padding: 0.5rem 0 0;
+    font-style: italic;
+}
+
 /* === Data Tab === */
 .data-section {
     background: var(--bg-card);

@@ -1,24 +1,26 @@
 // Strategy computation and backtesting module
 const Strategy = {
 
+    // Current signals — uses nowcast data for the most up-to-date reading
     computeSignals() {
         const signals = {};
 
-        // 1. Trend: S&P 500 vs 200-day MA
+        // 1. Trend: S&P 500 vs 200-day MA (real-time, no lag)
         const sp = DataStore.getLatest('sp500');
         if (sp && sp.ma200 !== null) {
             signals.trend = sp.value > sp.ma200 ? 1 : -1;
             signals.trendDetail = `S&P ${sp.value.toFixed(0)} ${sp.value > sp.ma200 ? '>' : '<'} MA ${sp.ma200.toFixed(0)}`;
         }
 
-        // 2. Unemployment: below or above 12-month MA
+        // 2. Unemployment: below or above 12-month MA (uses nowcast if available)
         const unemp = DataStore.getLatest('unemployment');
         if (unemp && unemp.ma12 !== null) {
             signals.unemployment = unemp.value < unemp.ma12 ? 1 : -1;
             signals.unemploymentDetail = `${unemp.value.toFixed(1)}% ${unemp.value < unemp.ma12 ? '<' : '>'} MA ${unemp.ma12.toFixed(1)}%`;
+            signals.unemploymentNowcast = !!unemp.nowcast;
         }
 
-        // 3. Volatility regime
+        // 3. Volatility regime (real-time, no lag)
         const vix = DataStore.getLatest('vix');
         if (vix) {
             if (vix.value < CONFIG.STRATEGY.VIX_LOW) signals.vix = 1;
@@ -36,13 +38,14 @@ const Strategy = {
             signals.capeDetail = `CAPE at ${cape.value.toFixed(1)}`;
         }
 
-        // 5. Investor allocation
+        // 5. Investor allocation (uses nowcast)
         const alloc = DataStore.getLatest('equityAlloc');
         if (alloc) {
             if (alloc.value < CONFIG.STRATEGY.ALLOC_LOW) signals.allocation = 1;
             else if (alloc.value > CONFIG.STRATEGY.ALLOC_HIGH) signals.allocation = -1;
             else signals.allocation = 0;
             signals.allocationDetail = `Allocation at ${alloc.value.toFixed(1)}%`;
+            signals.allocationNowcast = !!alloc.nowcast;
         }
 
         // Composite score
@@ -77,11 +80,11 @@ const Strategy = {
         if (!container) return;
 
         const items = [
-            { name: 'Trend (200-Day MA)', value: signals.trend, detail: signals.trendDetail },
-            { name: 'Unemployment Trend', value: signals.unemployment, detail: signals.unemploymentDetail },
-            { name: 'Volatility Regime', value: signals.vix, detail: signals.vixDetail },
-            { name: 'Valuation (CAPE)', value: signals.cape, detail: signals.capeDetail },
-            { name: 'Investor Allocation', value: signals.allocation, detail: signals.allocationDetail },
+            { name: 'Trend (200-Day MA)', value: signals.trend, detail: signals.trendDetail, nowcast: false },
+            { name: 'Unemployment Trend', value: signals.unemployment, detail: signals.unemploymentDetail, nowcast: signals.unemploymentNowcast },
+            { name: 'Volatility Regime', value: signals.vix, detail: signals.vixDetail, nowcast: false },
+            { name: 'Valuation (CAPE)', value: signals.cape, detail: signals.capeDetail, nowcast: false },
+            { name: 'Investor Allocation', value: signals.allocation, detail: signals.allocationDetail, nowcast: signals.allocationNowcast },
         ];
 
         let html = '';
@@ -89,9 +92,10 @@ const Strategy = {
             if (item.value === undefined) return;
             const cls = item.value > 0 ? 'positive' : item.value < 0 ? 'negative' : 'neutral';
             const label = item.value > 0 ? '+1' : item.value < 0 ? '-1' : '0';
+            const badge = item.nowcast ? ' <span class="nowcast-badge">NOWCAST</span>' : '';
             html += `
                 <div class="signal-row">
-                    <span>${item.name}</span>
+                    <span>${item.name}${badge}</span>
                     <span class="signal-value ${cls}" title="${item.detail || ''}">${label}</span>
                 </div>`;
         });
@@ -106,50 +110,71 @@ const Strategy = {
         container.innerHTML = html;
     },
 
+    // Compute a single signal score at a given date using lagged data
+    // This is what an investor would have actually known at `dateStr`
+    computeLaggedScore(dateStr) {
+        let score = 0;
+        let count = 0;
+
+        // 1. S&P 500 trend (0 month lag — real-time)
+        const sp = DataStore.getLaggedValue('sp500', dateStr, CONFIG.PUB_LAG.SP500);
+        if (sp && sp.ma200 !== null) {
+            score += sp.value > sp.ma200 ? 1 : -1;
+            count++;
+        }
+
+        // 2. Unemployment (1 month lag)
+        const unemp = DataStore.getLaggedValue('unemployment', dateStr, CONFIG.PUB_LAG.UNEMPLOYMENT);
+        if (unemp && unemp.ma12 !== null) {
+            score += unemp.value < unemp.ma12 ? 1 : -1;
+            count++;
+        }
+
+        // 3. VIX (0 month lag — real-time)
+        const vix = DataStore.getLaggedValue('vix', dateStr, CONFIG.PUB_LAG.VIX);
+        if (vix) {
+            if (vix.value < CONFIG.STRATEGY.VIX_LOW) score += 1;
+            else if (vix.value > CONFIG.STRATEGY.VIX_HIGH) score -= 1;
+            count++;
+        }
+
+        // 4. CAPE (2 month lag — depends on CPI)
+        const cape = DataStore.getLaggedValue('cape', dateStr, CONFIG.PUB_LAG.CAPE);
+        if (cape) {
+            if (cape.value < CONFIG.STRATEGY.CAPE_LOW) score += 1;
+            else if (cape.value > CONFIG.STRATEGY.CAPE_HIGH) score -= 1;
+            count++;
+        }
+
+        // 5. Equity allocation (1 month lag — nowcasted)
+        const alloc = DataStore.getLaggedValue('equityAlloc', dateStr, CONFIG.PUB_LAG.EQUITY_ALLOC);
+        if (alloc) {
+            if (alloc.value < CONFIG.STRATEGY.ALLOC_LOW) score += 1;
+            else if (alloc.value > CONFIG.STRATEGY.ALLOC_HIGH) score -= 1;
+            count++;
+        }
+
+        return { score, count };
+    },
+
+    scoreToAllocation(score) {
+        if (score >= 4) return 1.0;
+        if (score >= 2) return 0.8;
+        if (score >= 0) return 0.6;
+        if (score >= -1) return 0.4;
+        return 0.2;
+    },
+
     renderStrategyChart() {
-        // Historical composite signal chart
         const sp = DataStore.processed.sp500;
-        const unemp = DataStore.processed.unemployment;
-        const vix = DataStore.processed.vix;
         if (!sp || sp.length === 0) return;
 
-        // Build monthly timeline with signals
+        // Build monthly timeline with lag-aware signals
         const monthly = DataStore.getMonthlyValues(sp);
-        const unempLookup = {};
-        if (unemp) unemp.forEach(d => { unempLookup[d.date.substring(0, 7)] = d; });
-        const vixLookup = {};
-        if (vix) {
-            const monthlyVix = DataStore.getMonthlyValues(vix);
-            monthlyVix.forEach(d => { vixLookup[d.date.substring(0, 7)] = d; });
-        }
 
         const timeline = [];
         monthly.forEach(d => {
-            const key = d.date.substring(0, 7);
-            let score = 0;
-            let count = 0;
-
-            // Trend signal
-            if (d.ma200 !== null) {
-                score += d.value > d.ma200 ? 1 : -1;
-                count++;
-            }
-
-            // Unemployment
-            const u = unempLookup[key];
-            if (u && u.ma12 !== null) {
-                score += u.value < u.ma12 ? 1 : -1;
-                count++;
-            }
-
-            // VIX
-            const v = vixLookup[key];
-            if (v) {
-                if (v.value < CONFIG.STRATEGY.VIX_LOW) score += 1;
-                else if (v.value > CONFIG.STRATEGY.VIX_HIGH) score -= 1;
-                count++;
-            }
-
+            const { score, count } = this.computeLaggedScore(d.date);
             if (count > 0) {
                 timeline.push({ date: d.date, score, price: d.value });
             }
@@ -166,7 +191,7 @@ const Strategy = {
                 labels: timeline.map(d => d.date),
                 datasets: [
                     {
-                        label: 'Composite Score',
+                        label: 'Composite Score (lag-aware)',
                         data: timeline.map(d => d.score),
                         borderColor: CONFIG.COLORS.yellow,
                         backgroundColor: timeline.map(d =>
@@ -213,17 +238,9 @@ const Strategy = {
         const sp = DataStore.processed.sp500;
         if (!sp || sp.length === 0) return;
 
-        const unemp = DataStore.processed.unemployment;
-        const vix = DataStore.processed.vix;
-
         const monthly = DataStore.getMonthlyValues(sp);
-        const unempLookup = {};
-        if (unemp) unemp.forEach(d => { unempLookup[d.date.substring(0, 7)] = d; });
-        const vixMonthly = vix ? DataStore.getMonthlyValues(vix) : [];
-        const vixLookup = {};
-        vixMonthly.forEach(d => { vixLookup[d.date.substring(0, 7)] = d; });
 
-        // Backtest: strategy vs buy-and-hold
+        // Lag-aware backtest: strategy vs buy-and-hold
         let strategyValue = 10000;
         let buyHoldValue = 10000;
         const strategyLine = [];
@@ -235,29 +252,9 @@ const Strategy = {
             if (prevPrice <= 0) continue;
             const ret = (currPrice - prevPrice) / prevPrice;
 
-            // Compute signal at previous month
-            const prevKey = monthly[i - 1].date.substring(0, 7);
-            let score = 0;
-            if (monthly[i - 1].ma200 !== null) {
-                score += monthly[i - 1].value > monthly[i - 1].ma200 ? 1 : -1;
-            }
-            const u = unempLookup[prevKey];
-            if (u && u.ma12 !== null) {
-                score += u.value < u.ma12 ? 1 : -1;
-            }
-            const v = vixLookup[prevKey];
-            if (v) {
-                if (v.value < CONFIG.STRATEGY.VIX_LOW) score += 1;
-                else if (v.value > CONFIG.STRATEGY.VIX_HIGH) score -= 1;
-            }
-
-            // Map score to allocation
-            let alloc;
-            if (score >= 2) alloc = 1.0;
-            else if (score >= 1) alloc = 0.8;
-            else if (score >= 0) alloc = 0.6;
-            else if (score >= -1) alloc = 0.4;
-            else alloc = 0.2;
+            // Use lagged signal from previous month (what we'd actually know)
+            const { score } = this.computeLaggedScore(monthly[i - 1].date);
+            const alloc = this.scoreToAllocation(score);
 
             strategyValue *= (1 + ret * alloc);
             buyHoldValue *= (1 + ret);
@@ -300,7 +297,7 @@ const Strategy = {
                     ...CONFIG.CHART_DEFAULTS.plugins,
                     title: {
                         display: true,
-                        text: 'Backtest: Strategy vs Buy & Hold (starting $10,000)',
+                        text: 'Lag-Aware Backtest: Strategy vs Buy & Hold (starting $10,000)',
                         color: '#e8e9ed',
                         font: { size: 13, weight: '600' },
                     },
@@ -364,6 +361,7 @@ const Strategy = {
                 <div class="stat-label">Buy & Hold Final Value</div>
                 <div class="stat-value">$${bhFinal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
             </div>
+            <p class="lag-note">Backtest uses publication-lagged data: S&P/VIX real-time, unemployment 1mo, CPI 2mo, allocation 1mo, CAPE 2mo</p>
         `;
     },
 

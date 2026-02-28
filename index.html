@@ -142,23 +142,23 @@
                         <h3>Strategy Rules</h3>
                         <div class="rules-list">
                             <div class="rule">
-                                <span class="rule-name">1. Trend (200-Day MA)</span>
+                                <span class="rule-name">1. Trend (200-Day MA) <span class="nowcast-badge">REAL-TIME</span></span>
                                 <span class="rule-desc">S&P 500 above 200-day MA → +1, below → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">2. Unemployment Trend</span>
+                                <span class="rule-name">2. Unemployment Trend <span class="nowcast-badge">1mo lag, nowcast via ICSA</span></span>
                                 <span class="rule-desc">Unemployment below 12-mo MA → +1, above → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">3. Volatility Regime</span>
+                                <span class="rule-name">3. Volatility Regime <span class="nowcast-badge">REAL-TIME</span></span>
                                 <span class="rule-desc">VIX below 20 → +1, 20-30 → 0, above 30 → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">4. Valuation (CAPE)</span>
+                                <span class="rule-name">4. Valuation (CAPE) <span class="nowcast-badge">~2mo lag</span></span>
                                 <span class="rule-desc">CAPE below 20 → +1, 20-30 → 0, above 30 → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">5. Investor Allocation</span>
+                                <span class="rule-name">5. Investor Allocation <span class="nowcast-badge">3mo lag, nowcast via S&P</span></span>
                                 <span class="rule-desc">Equity allocation below 35% → +1, 35-45% → 0, above 45% → -1</span>
                             </div>
                         </div>
@@ -280,6 +280,22 @@
                 <div class="about-card">
                     <h3>7. VIX & Volatility Regimes</h3>
                     <p>The CBOE Volatility Index measures implied volatility from S&P 500 options. Low-volatility regimes (VIX &lt; 20) tend to favor trend-following strategies. High-volatility spikes (VIX &gt; 30) often coincide with market bottoms but also precede further declines.</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>Nowcasting & Publication Lags</h3>
+                    <p>FRED data has significant publication lags. To provide the most current signal, this dashboard <strong>nowcasts</strong> lagged series:</p>
+                    <p><strong>Equity Allocation:</strong> FRED's Z.1 data lags ~3 months. We estimate current allocation by applying S&P 500 price changes to the last known reading: if equities were X% of the portfolio and the S&P moved by Y%, the new equity share is recomputed assuming non-equity assets are unchanged.</p>
+                    <p><strong>Unemployment:</strong> Released ~1 month after reference. We use weekly Initial Jobless Claims (ICSA) to estimate the direction and magnitude of the next reading.</p>
+                    <p><strong>CPI:</strong> Released ~2 months after reference. We extrapolate using the 3-month average month-over-month trend.</p>
+                    <p>Nowcast points appear as <span style="color:#ff79c6">dashed pink lines</span> on charts and are labeled in the strategy signals.</p>
+                </div>
+
+                <div class="about-card">
+                    <h3>Lag-Aware Backtesting</h3>
+                    <p>The backtest accounts for realistic publication delays. At each monthly decision point, the strategy only uses data that would have actually been available:</p>
+                    <p><strong>S&P 500 / VIX:</strong> Real-time (0 months lag) · <strong>Unemployment:</strong> 1 month lag · <strong>CPI / CAPE:</strong> 2 months lag · <strong>Equity Allocation:</strong> 1 month lag (since we're nowcasting)</p>
+                    <p>This eliminates look-ahead bias and gives a more honest picture of what an investor could have achieved.</p>
                 </div>
 
                 <div class="about-card">
