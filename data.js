@@ -7,9 +7,10 @@ const DataStore = {
 
     // CORS proxies — tried in order for requests that need proxying
     CORS_PROXIES: [
-        url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+        url => `https://proxy.corsfix.com/?${encodeURIComponent(url)}`,
         url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
         url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+        url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     ],
 
     // ─── Low-level fetchers ──────────────────────────────────────────
