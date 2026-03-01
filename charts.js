@@ -21,6 +21,7 @@ const Charts = {
     },
 
     renderAllCharts() {
+        this.destroyAll();
         this.renderEquityAllocation();
         this.renderAllocationScatter();
         this.renderCAPE();

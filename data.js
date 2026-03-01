@@ -3,6 +3,7 @@ const DataStore = {
     raw: {},
     processed: {},
     apiKey: null,
+    status: {}, // track load status per series
 
     setApiKey(key) {
         this.apiKey = key.trim();
@@ -19,40 +20,64 @@ const DataStore = {
         if (startDate) params.set('observation_start', startDate);
         const url = `${CONFIG.FRED_BASE_URL}?${params}`;
         const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`FRED API error (${resp.status}) for ${seriesId}`);
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            throw new Error(`FRED API error ${resp.status} for ${seriesId}: ${text.substring(0, 200)}`);
+        }
         const data = await resp.json();
-        return (data.observations || [])
+        if (data.error_message) {
+            throw new Error(`FRED error for ${seriesId}: ${data.error_message}`);
+        }
+        const obs = (data.observations || [])
             .filter(o => o.value !== '.')
             .map(o => ({
                 date: o.date,
                 value: parseFloat(o.value),
             }));
+        if (obs.length === 0) {
+            throw new Error(`No data returned for ${seriesId}`);
+        }
+        return obs;
     },
 
     async loadAllSeries() {
+        this.status = {};
         const fetches = {
-            sp500: this.fetchFredSeries(CONFIG.SERIES.SP500, '2000-01-01'),
-            unemployment: this.fetchFredSeries(CONFIG.SERIES.UNRATE, '1970-01-01'),
-            cpi: this.fetchFredSeries(CONFIG.SERIES.CPIAUCSL, '1970-01-01'),
-            vix: this.fetchFredSeries(CONFIG.SERIES.VIXCLS, '2000-01-01'),
-            equityAlloc: this.fetchFredSeries(CONFIG.SERIES.EQUITY_ALLOC, '1950-01-01'),
-            icsa: this.fetchFredSeries(CONFIG.SERIES.ICSA, '2000-01-01'),
-            yieldCurve: this.fetchFredSeries(CONFIG.SERIES.T10Y2Y, '1990-01-01'),
+            sp500: { promise: this.fetchFredSeries(CONFIG.SERIES.SP500, '2000-01-01'), label: 'S&P 500' },
+            unemployment: { promise: this.fetchFredSeries(CONFIG.SERIES.UNRATE, '1970-01-01'), label: 'Unemployment' },
+            cpi: { promise: this.fetchFredSeries(CONFIG.SERIES.CPIAUCSL, '1970-01-01'), label: 'CPI' },
+            vix: { promise: this.fetchFredSeries(CONFIG.SERIES.VIXCLS, '2000-01-01'), label: 'VIX' },
+            equityAlloc: { promise: this.fetchFredSeries(CONFIG.SERIES.EQUITY_ALLOC, '1950-01-01'), label: 'Equity Allocation' },
+            icsa: { promise: this.fetchFredSeries(CONFIG.SERIES.ICSA, '2000-01-01'), label: 'Initial Claims' },
+            yieldCurve: { promise: this.fetchFredSeries(CONFIG.SERIES.T10Y2Y, '1990-01-01'), label: 'Yield Curve' },
         };
 
-        const results = await Promise.allSettled(Object.values(fetches));
         const keys = Object.keys(fetches);
+        const results = await Promise.allSettled(keys.map(k => fetches[k].promise));
+
+        let loadedCount = 0;
+        let failedCount = 0;
 
         keys.forEach((key, i) => {
             if (results[i].status === 'fulfilled') {
                 this.raw[key] = results[i].value;
+                this.status[key] = { ok: true, label: fetches[key].label, count: results[i].value.length };
+                loadedCount++;
             } else {
-                console.warn(`Failed to load ${key}:`, results[i].reason);
+                const errMsg = results[i].reason?.message || 'Unknown error';
+                console.warn(`Failed to load ${key}:`, errMsg);
                 this.raw[key] = [];
+                this.status[key] = { ok: false, label: fetches[key].label, error: errMsg };
+                failedCount++;
             }
         });
 
+        if (loadedCount === 0) {
+            throw new Error('All data series failed to load. Check your FRED API key and network connection.');
+        }
+
         this.processData();
+        return { loadedCount, failedCount, total: keys.length };
     },
 
     processData() {
@@ -120,9 +145,8 @@ const DataStore = {
                     const priorClaimsMA = priorClaims.reduce((s, d) => s + d.value, 0) / priorClaims.length;
 
                     // Claims/unemployment relationship: ~2000 claims per 0.1% unemployment
-                    // Scale factor derived from empirical relationship
                     const claimsChange = recentClaimsMA - priorClaimsMA;
-                    const unempDelta = claimsChange / 20000; // rough scaling
+                    const unempDelta = claimsChange / 20000;
 
                     const nowcastValue = Math.max(0, lastUnemp.value + unempDelta);
                     const nowcastDate = new Date(lastUnempDate);
@@ -181,17 +205,10 @@ const DataStore = {
                 const projCPI = lastCPI.value * Math.pow(1 + avgMoM, m);
 
                 // YoY inflation: compare to 12 months before the projected date
-                const yoyRefIndex = data.length - 12 + (m - 1);
+                const refIndex = data.length - (12 - m) - 1;
                 let yoy = null;
-                if (yoyRefIndex >= 0 && yoyRefIndex < data.length) {
-                    // The reference point is (12 - m) months before the last actual data point
-                    // which is data[data.length - 12 + (m-1)] roughly
-                    // Actually: projected month is m months after last data point.
-                    // 12 months before projected month = (12-m) months before last data point
-                    const refIndex = data.length - (12 - m) - 1;
-                    if (refIndex >= 0) {
-                        yoy = ((projCPI - data[refIndex].value) / data[refIndex].value) * 100;
-                    }
+                if (refIndex >= 0) {
+                    yoy = ((projCPI - data[refIndex].value) / data[refIndex].value) * 100;
                 }
 
                 withInflation.push({
@@ -244,9 +261,6 @@ const DataStore = {
 
             if (spAtAlloc && spAtAlloc > 0 && latestSPDate > lastAllocDate) {
                 const A = lastAlloc.value / 100; // fraction
-                const priceRatio = latestSP / spAtAlloc;
-                const newEquity = A * priceRatio;
-                const newAlloc = (newEquity / (newEquity + (1 - A))) * 100;
 
                 // Generate monthly nowcast points between last known and now
                 const monthsAhead = (latestSPDate.getFullYear() - lastAllocDate.getFullYear()) * 12

@@ -13,18 +13,82 @@
         });
     });
 
+    // API key management
+    const savedKey = localStorage.getItem('fred_api_key');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const apiKeyBtn = document.getElementById('api-key-btn');
+
+    if (apiKeyInput) {
+        apiKeyInput.value = savedKey || CONFIG.FRED_API_KEY || '';
+    }
+
+    if (apiKeyBtn) {
+        apiKeyBtn.addEventListener('click', () => {
+            const key = apiKeyInput ? apiKeyInput.value.trim() : '';
+            if (key) {
+                localStorage.setItem('fred_api_key', key);
+                loadAllData(key);
+            }
+        });
+    }
+
     // Auto-load data on page load
-    loadAllData();
+    const keyToUse = savedKey || CONFIG.FRED_API_KEY;
+    if (keyToUse) {
+        loadAllData(keyToUse);
+    } else {
+        showStatus('Enter your FRED API key above to load data.', 'warning');
+    }
 })();
 
+function showStatus(message, type) {
+    const el = document.getElementById('data-status');
+    if (!el) return;
+    el.className = 'data-status ' + (type || 'info');
+    el.innerHTML = message;
+    el.classList.remove('hidden');
+}
+
+function hideStatus() {
+    const el = document.getElementById('data-status');
+    if (el) el.classList.add('hidden');
+}
+
+function showSeriesStatus(status) {
+    const el = document.getElementById('series-status');
+    if (!el) return;
+
+    const items = Object.entries(status).map(([key, s]) => {
+        const icon = s.ok ? '<span class="status-ok">OK</span>' : '<span class="status-fail">FAIL</span>';
+        const detail = s.ok
+            ? `${s.count.toLocaleString()} data points`
+            : s.error;
+        return `<div class="status-row">${icon} <strong>${s.label}</strong>: ${detail}</div>`;
+    });
+
+    el.innerHTML = items.join('');
+    el.classList.remove('hidden');
+}
+
 // Global: load all data
-async function loadAllData() {
+async function loadAllData(apiKey) {
     const loading = document.getElementById('loading');
     loading.classList.remove('hidden');
+    hideStatus();
 
     try {
-        DataStore.setApiKey(CONFIG.FRED_API_KEY);
-        await DataStore.loadAllSeries();
+        DataStore.setApiKey(apiKey);
+        const result = await DataStore.loadAllSeries();
+
+        // Show series status
+        showSeriesStatus(DataStore.status);
+
+        if (result.failedCount > 0) {
+            showStatus(
+                `Loaded ${result.loadedCount}/${result.total} series. ${result.failedCount} failed (see details below). Charts may be incomplete.`,
+                result.loadedCount > 0 ? 'warning' : 'error'
+            );
+        }
 
         // Render charts
         Charts.renderAllCharts();
@@ -39,15 +103,24 @@ async function loadAllData() {
         populateDataTable();
     } catch (err) {
         console.error('Error loading data:', err);
+        showStatus(
+            `Failed to load data: ${err.message}. <br>
+            Make sure your <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">FRED API key</a> is valid and you have internet access.`,
+            'error'
+        );
     } finally {
         loading.classList.add('hidden');
     }
 }
 
 // Data table population
+let dataTableInitialized = false;
 function populateDataTable() {
     const select = document.getElementById('data-series-select');
-    select.addEventListener('change', () => renderDataTable(select.value));
+    if (!dataTableInitialized) {
+        select.addEventListener('change', () => renderDataTable(select.value));
+        dataTableInitialized = true;
+    }
     renderDataTable(select.value);
 }
 
@@ -65,7 +138,7 @@ function renderDataTable(series) {
             rows = data.slice(-500).map(d => [
                 d.date,
                 d.value.toFixed(2),
-                d.ma200 !== null ? d.ma200.toFixed(2) : '—',
+                d.ma200 !== null ? d.ma200.toFixed(2) : '\u2014',
             ]);
             break;
         }
@@ -81,7 +154,7 @@ function renderDataTable(series) {
             rows = data.slice(-200).map(d => [
                 d.date,
                 d.value.toFixed(1),
-                d.ma12 !== null ? d.ma12.toFixed(1) : '—',
+                d.ma12 !== null ? d.ma12.toFixed(1) : '\u2014',
                 d.nowcast ? 'Nowcast' : 'FRED',
             ]);
             break;
@@ -115,7 +188,7 @@ function renderDataTable(series) {
             rows = data.slice(-500).map(d => [
                 d.date,
                 d.value.toFixed(2),
-                d.ma20 !== null ? d.ma20.toFixed(2) : '—',
+                d.ma20 !== null ? d.ma20.toFixed(2) : '\u2014',
             ]);
             break;
         }

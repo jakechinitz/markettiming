@@ -9,10 +9,8 @@ const CONFIG = {
         UNRATE: 'UNRATE',
         CPIAUCSL: 'CPIAUCSL',
         VIXCLS: 'VIXCLS',
-        // Household equity allocation proxy from Z.1 Flow of Funds
-        EQUITY_ALLOC: 'BOGZ1FL153064005Q',
-        // For CAPE we use Shiller data via FRED (quarterly, multpl source)
-        CAPE: 'MULTPL/SHILLER_PE_RATIO_MONTH',
+        // Household equity allocation — directly/indirectly held equities as % of financial assets
+        EQUITY_ALLOC: 'BOGZ1FL153064486Q',
         // Initial Jobless Claims (weekly) — leading indicator for unemployment
         ICSA: 'ICSA',
         // 10-Year minus 2-Year Treasury spread (yield curve)

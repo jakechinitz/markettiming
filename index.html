@@ -24,6 +24,17 @@
     </header>
 
     <main>
+        <!-- API Key & Status -->
+        <div class="api-key-bar">
+            <label for="api-key-input">FRED API Key:</label>
+            <input type="text" id="api-key-input" placeholder="Enter your FRED API key" spellcheck="false">
+            <button id="api-key-btn">Load Data</button>
+            <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" class="get-key-link">Get a free key</a>
+        </div>
+
+        <div id="data-status" class="data-status hidden"></div>
+        <div id="series-status" class="series-status hidden"></div>
+
         <!-- Loading indicator -->
         <div id="loading" class="loading hidden">
             <div class="spinner"></div>
@@ -254,7 +265,7 @@
                     <h3>1. Average Investor Equity Allocation</h3>
                     <p>From Jesse Livermore's <a href="https://www.philosophicaleconomics.com/2013/12/the-single-greatest-predictor-of-future-stock-market-returns/" target="_blank">Philosophical Economics</a>: the percentage of financial assets that U.S. households allocate to equities is the single best predictor of subsequent 10-year real returns. The metric comes from the Federal Reserve's Z.1 Flow of Funds report.</p>
                     <p><strong>Formula:</strong> Equity Allocation = Household Equity Holdings / (Equity Holdings + Debt Securities + Deposits + Other Financial Assets)</p>
-                    <p><strong>FRED Series:</strong> Computed from multiple Z.1 series. Proxy: BOGZ1FL153064005Q (Corporate equities and mutual fund shares as % of financial assets)</p>
+                    <p><strong>FRED Series:</strong> BOGZ1FL153064486Q (Directly and Indirectly Held Corporate Equities as a Percentage of Financial Assets)</p>
                 </div>
 
                 <div class="about-card">
