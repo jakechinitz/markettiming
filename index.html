@@ -38,7 +38,7 @@
         <!-- Loading indicator -->
         <div id="loading" class="loading hidden">
             <div class="spinner"></div>
-            <span>Loading data from FRED...</span>
+            <span>Loading data from Yahoo Finance & FRED...</span>
         </div>
 
         <!-- CHARTS TAB -->
@@ -99,7 +99,7 @@
                 <div class="chart-header">
                     <h2>5. S&P 500 & 200-Day Moving Average</h2>
                     <p class="chart-description">Classic trend following signal. When price is above the 200-day MA, the market is in an uptrend.</p>
-                    <div class="source-link">Source: FRED series SP500</div>
+                    <div class="source-link">Source: Yahoo Finance (^GSPC) | FRED SP500</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-sp500"></canvas>
@@ -123,7 +123,7 @@
                 <div class="chart-header">
                     <h2>7. VIX Volatility Index & Trend Following Regimes</h2>
                     <p class="chart-description">The CBOE Volatility Index with regime thresholds. Low vol environments favor trend-following; high vol signals risk-off.</p>
-                    <div class="source-link">Source: FRED series VIXCLS</div>
+                    <div class="source-link">Source: Yahoo Finance (^VIX) | FRED VIXCLS</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-vix"></canvas>
@@ -325,7 +325,8 @@
 
                 <div class="about-card">
                     <h3>Data Sources</h3>
-                    <p>All data is pulled in real-time from the <a href="https://fred.stlouisfed.org/" target="_blank">Federal Reserve Economic Data (FRED)</a> API. You need a free API key from FRED to use this dashboard.</p>
+                    <p><strong>Market Data (S&P 500, VIX):</strong> Fetched from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> via CORS proxy for full history (25+ years of daily data). Falls back to FRED if Yahoo is unavailable.</p>
+                    <p><strong>Economic Data (Unemployment, CPI, Yield Curve, Initial Claims, Equity Allocation):</strong> Pulled from the <a href="https://fred.stlouisfed.org/" target="_blank">Federal Reserve Economic Data (FRED)</a> API. Requires a free API key.</p>
                     <p><a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">Get a free FRED API key →</a></p>
                 </div>
             </section>
@@ -333,7 +334,7 @@
     </main>
 
     <footer>
-        <p>Data sourced from <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> · Updated automatically · Not financial advice</p>
+        <p>Data from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> & <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> · Updated automatically · Not financial advice</p>
     </footer>
 
     <script src="config.js"></script>

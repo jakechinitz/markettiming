@@ -61,7 +61,7 @@ function showSeriesStatus(status) {
     const items = Object.entries(status).map(([key, s]) => {
         const icon = s.ok ? '<span class="status-ok">OK</span>' : '<span class="status-fail">FAIL</span>';
         const detail = s.ok
-            ? `${s.count.toLocaleString()} data points`
+            ? `${s.count.toLocaleString()} pts via ${s.source}`
             : s.error;
         return `<div class="status-row">${icon} <strong>${s.label}</strong>: ${detail}</div>`;
     });
