@@ -24,14 +24,6 @@
     </header>
 
     <main>
-        <!-- API Key & Status -->
-        <div class="api-key-bar">
-            <label for="api-key-input">FRED API Key:</label>
-            <input type="text" id="api-key-input" placeholder="Enter your FRED API key" spellcheck="false">
-            <button id="api-key-btn">Load Data</button>
-            <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" class="get-key-link">Get a free key</a>
-        </div>
-
         <div id="data-status" class="data-status hidden"></div>
         <div id="series-status" class="series-status hidden"></div>
 
@@ -326,8 +318,7 @@
                 <div class="about-card">
                     <h3>Data Sources</h3>
                     <p><strong>Market Data (S&P 500, VIX):</strong> Fetched from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> via CORS proxy for full history (25+ years of daily data). Falls back to FRED if Yahoo is unavailable.</p>
-                    <p><strong>Economic Data (Unemployment, CPI, Yield Curve, Initial Claims, Equity Allocation):</strong> Pulled from the <a href="https://fred.stlouisfed.org/" target="_blank">Federal Reserve Economic Data (FRED)</a> API. Requires a free API key.</p>
-                    <p><a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">Get a free FRED API key →</a></p>
+                    <p><strong>Economic Data (Unemployment, CPI, Yield Curve, Initial Claims, Equity Allocation):</strong> Pulled from the <a href="https://fred.stlouisfed.org/" target="_blank">Federal Reserve Economic Data (FRED)</a> API. All data loads automatically — no API key needed.</p>
                 </div>
             </section>
         </div>

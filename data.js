@@ -3,22 +3,91 @@
 const DataStore = {
     raw: {},
     processed: {},
-    apiKey: null,
     status: {},
 
-    // CORS proxies to try (in order) for Yahoo Finance requests
+    // CORS proxies — tried in order for requests that need proxying
     CORS_PROXIES: [
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
         url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
         url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
     ],
 
-    setApiKey(key) {
-        this.apiKey = key.trim();
+    // ─── Low-level fetchers ──────────────────────────────────────────
+
+    // Fetch with a timeout (some browsers don't support AbortSignal.timeout)
+    async _fetch(url, timeoutMs = 15000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const resp = await fetch(url, { signal: controller.signal });
+            return resp;
+        } finally {
+            clearTimeout(timer);
+        }
+    },
+
+    // Parse FRED JSON response into [{date, value}, ...]
+    _parseFredResponse(json, seriesId) {
+        if (json.error_message) throw new Error(`FRED: ${json.error_message}`);
+        const obs = (json.observations || [])
+            .filter(o => o.value !== '.')
+            .map(o => ({ date: o.date, value: parseFloat(o.value) }));
+        if (obs.length === 0) throw new Error(`No data for ${seriesId}`);
+        return obs;
+    },
+
+    // Build a FRED API URL
+    _fredUrl(seriesId, apiKey, startDate) {
+        const params = new URLSearchParams({
+            series_id: seriesId,
+            api_key: apiKey,
+            file_type: 'json',
+            sort_order: 'asc',
+        });
+        if (startDate) params.set('observation_start', startDate);
+        return `${CONFIG.FRED_BASE_URL}?${params}`;
+    },
+
+    // ─── FRED fetcher (tries all keys, then proxied) ─────────────────
+    async fetchFred(seriesId, startDate) {
+        const keys = CONFIG.FRED_API_KEYS || [];
+        const errors = [];
+
+        // Strategy 1: Direct fetch with each API key
+        for (const key of keys) {
+            try {
+                const url = this._fredUrl(seriesId, key, startDate);
+                console.log(`[FRED] Trying direct ${seriesId} with key ...${key.slice(-4)}`);
+                const resp = await this._fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const json = await resp.json();
+                return this._parseFredResponse(json, seriesId);
+            } catch (err) {
+                errors.push(`direct(${key.slice(-4)}): ${err.message}`);
+            }
+        }
+
+        // Strategy 2: Route through CORS proxies (in case direct CORS is blocked)
+        for (const key of keys) {
+            const fredUrl = this._fredUrl(seriesId, key, startDate);
+            for (const makeProxy of this.CORS_PROXIES) {
+                try {
+                    const proxied = makeProxy(fredUrl);
+                    console.log(`[FRED] Trying proxied ${seriesId} via ${proxied.substring(0, 40)}...`);
+                    const resp = await this._fetch(proxied);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const json = await resp.json();
+                    return this._parseFredResponse(json, seriesId);
+                } catch (err) {
+                    errors.push(`proxy: ${err.message}`);
+                }
+            }
+        }
+
+        throw new Error(`FRED failed for ${seriesId}: ${errors.slice(0, 3).join(' | ')}`);
     },
 
     // ─── Yahoo Finance fetcher ───────────────────────────────────────
-    // Returns [{date, value}, ...] from Yahoo Finance v8 chart API
     async fetchYahoo(symbol, startDate) {
         const period1 = Math.floor(new Date(startDate).getTime() / 1000);
         const period2 = Math.floor(Date.now() / 1000);
@@ -27,16 +96,15 @@ const DataStore = {
 
         let lastError = null;
 
-        // Try each CORS proxy in order
         for (const makeUrl of this.CORS_PROXIES) {
             try {
                 const proxiedUrl = makeUrl(yahooUrl);
-                const resp = await fetch(proxiedUrl, { signal: AbortSignal.timeout(15000) });
+                const resp = await this._fetch(proxiedUrl);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const json = await resp.json();
 
                 const result = json?.chart?.result?.[0];
-                if (!result || !result.timestamp) throw new Error('No chart data in response');
+                if (!result || !result.timestamp) throw new Error('No chart data');
 
                 const timestamps = result.timestamp;
                 const closes = result.indicators?.quote?.[0]?.close || [];
@@ -47,45 +115,18 @@ const DataStore = {
                     const val = adjCloses[i] ?? closes[i];
                     if (val == null || isNaN(val)) continue;
                     const d = new Date(timestamps[i] * 1000);
-                    const dateStr = d.toISOString().substring(0, 10);
-                    data.push({ date: dateStr, value: val });
+                    data.push({ date: d.toISOString().substring(0, 10), value: val });
                 }
                 if (data.length === 0) throw new Error('No valid data points');
                 return data;
             } catch (err) {
                 lastError = err;
-                continue; // try next proxy
             }
         }
-        throw new Error(`Yahoo Finance failed for ${symbol}: ${lastError?.message || 'all proxies failed'}`);
+        throw new Error(`Yahoo failed for ${symbol}: ${lastError?.message || 'all proxies failed'}`);
     },
 
-    // ─── FRED fetcher ────────────────────────────────────────────────
-    async fetchFred(seriesId, startDate) {
-        if (!this.apiKey) throw new Error('FRED API key is required');
-        const params = new URLSearchParams({
-            series_id: seriesId,
-            api_key: this.apiKey,
-            file_type: 'json',
-            sort_order: 'asc',
-        });
-        if (startDate) params.set('observation_start', startDate);
-        const url = `${CONFIG.FRED_BASE_URL}?${params}`;
-        const resp = await fetch(url);
-        if (!resp.ok) {
-            const text = await resp.text().catch(() => '');
-            throw new Error(`FRED ${resp.status} for ${seriesId}: ${text.substring(0, 120)}`);
-        }
-        const data = await resp.json();
-        if (data.error_message) throw new Error(`FRED: ${data.error_message}`);
-        const obs = (data.observations || [])
-            .filter(o => o.value !== '.')
-            .map(o => ({ date: o.date, value: parseFloat(o.value) }));
-        if (obs.length === 0) throw new Error(`No data for ${seriesId}`);
-        return obs;
-    },
-
-    // ─── Fetch with fallback (try multiple sources) ──────────────────
+    // ─── Fetch with fallback chain ───────────────────────────────────
     async fetchWithFallback(sources) {
         const errors = [];
         for (const src of sources) {
@@ -93,6 +134,7 @@ const DataStore = {
                 const data = await src.fn();
                 return { data, source: src.name };
             } catch (err) {
+                console.warn(`[${src.name}] ${err.message}`);
                 errors.push(`${src.name}: ${err.message}`);
             }
         }
@@ -103,9 +145,6 @@ const DataStore = {
     async loadAllSeries() {
         this.status = {};
 
-        // Define data sources for each series
-        // Market data: Yahoo Finance first (longer history, no key needed), FRED fallback
-        // Economic data: FRED (best source, no alternative needed)
         const series = {
             sp500: {
                 label: 'S&P 500',
@@ -153,7 +192,6 @@ const DataStore = {
             },
         };
 
-        // Fetch all in parallel, each with its own fallback chain
         const keys = Object.keys(series);
         const results = await Promise.allSettled(
             keys.map(k => this.fetchWithFallback(series[k].sources))
@@ -166,28 +204,19 @@ const DataStore = {
             if (results[i].status === 'fulfilled') {
                 const { data, source } = results[i].value;
                 this.raw[key] = data;
-                this.status[key] = {
-                    ok: true,
-                    label: series[key].label,
-                    source,
-                    count: data.length,
-                };
+                this.status[key] = { ok: true, label: series[key].label, source, count: data.length };
                 loadedCount++;
             } else {
                 const errMsg = results[i].reason?.message || 'Unknown error';
-                console.warn(`Failed to load ${key}:`, errMsg);
+                console.error(`Failed to load ${key}:`, errMsg);
                 this.raw[key] = [];
-                this.status[key] = {
-                    ok: false,
-                    label: series[key].label,
-                    error: errMsg,
-                };
+                this.status[key] = { ok: false, label: series[key].label, error: errMsg };
                 failedCount++;
             }
         });
 
         if (loadedCount === 0) {
-            throw new Error('All data series failed to load. Check your network and API key.');
+            throw new Error('All data series failed to load. Check your network connection.');
         }
 
         this.processData();
@@ -237,7 +266,6 @@ const DataStore = {
             return { date: d.date, value: d.value, ma12: ma, nowcast: false };
         });
 
-        // Nowcast using Initial Jobless Claims (ICSA)
         const icsa = this.raw.icsa || [];
         if (icsa.length > 0 && withMA.length > 0) {
             const lastUnemp = withMA[withMA.length - 1];
@@ -291,7 +319,6 @@ const DataStore = {
             return { date: d.date, value: d.value, inflationRate: yoy, nowcast: false };
         });
 
-        // Nowcast: extrapolate 1-2 months using 3-month MoM trend
         if (data.length >= 4) {
             const last3MoM = [];
             for (let i = data.length - 3; i < data.length; i++) {
@@ -334,7 +361,6 @@ const DataStore = {
 
         const processed = data.map(d => ({ ...d, nowcast: false }));
 
-        // Nowcast using S&P 500 price change
         const sp = this.raw.sp500 || [];
         if (sp.length > 0 && processed.length > 0) {
             const lastAlloc = processed[processed.length - 1];

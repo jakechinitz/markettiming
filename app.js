@@ -13,32 +13,8 @@
         });
     });
 
-    // API key management
-    const savedKey = localStorage.getItem('fred_api_key');
-    const apiKeyInput = document.getElementById('api-key-input');
-    const apiKeyBtn = document.getElementById('api-key-btn');
-
-    if (apiKeyInput) {
-        apiKeyInput.value = savedKey || CONFIG.FRED_API_KEY || '';
-    }
-
-    if (apiKeyBtn) {
-        apiKeyBtn.addEventListener('click', () => {
-            const key = apiKeyInput ? apiKeyInput.value.trim() : '';
-            if (key) {
-                localStorage.setItem('fred_api_key', key);
-                loadAllData(key);
-            }
-        });
-    }
-
-    // Auto-load data on page load
-    const keyToUse = savedKey || CONFIG.FRED_API_KEY;
-    if (keyToUse) {
-        loadAllData(keyToUse);
-    } else {
-        showStatus('Enter your FRED API key above to load data.', 'warning');
-    }
+    // Auto-load data on page load — API keys are built into config
+    loadAllData();
 })();
 
 function showStatus(message, type) {
@@ -71,13 +47,12 @@ function showSeriesStatus(status) {
 }
 
 // Global: load all data
-async function loadAllData(apiKey) {
+async function loadAllData() {
     const loading = document.getElementById('loading');
     loading.classList.remove('hidden');
     hideStatus();
 
     try {
-        DataStore.setApiKey(apiKey);
         const result = await DataStore.loadAllSeries();
 
         // Show series status
