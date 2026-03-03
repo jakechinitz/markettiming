@@ -118,9 +118,23 @@ function renderDataTable(series) {
             break;
         }
         case 'cape': {
-            columns = ['Date', 'CAPE Ratio'];
+            columns = ['Date', 'CAPE Ratio', 'Source'];
             const data = DataStore.processed.cape || [];
-            rows = data.slice(-200).map(d => [d.date, d.value.toFixed(2)]);
+            rows = data.slice(-200).map(d => [
+                d.date,
+                d.value.toFixed(2),
+                d.nowcast ? 'Estimated' : 'Shiller',
+            ]);
+            break;
+        }
+        case 'trailingPE': {
+            columns = ['Date', 'Trailing P/E', 'Source'];
+            const data = DataStore.processed.trailingPE || [];
+            rows = data.slice(-200).map(d => [
+                d.date,
+                d.value.toFixed(2),
+                d.nowcast ? 'Estimated' : 'Shiller',
+            ]);
             break;
         }
         case 'unemployment': {
@@ -194,7 +208,8 @@ function renderDataTable(series) {
                 ['VIX', DataStore.getLatest('vix')],
                 ['Equity Allocation', DataStore.getLatest('equityAlloc')],
                 ['Yield Curve (10Y-2Y)', DataStore.getLatest('yieldCurve')],
-                ['CAPE (approx)', DataStore.getLatest('cape')],
+                ['Shiller CAPE', DataStore.getLatest('cape')],
+                ['Trailing P/E', DataStore.getLatest('trailingPE')],
             ];
             rows = summaries
                 .filter(s => s[1])
