@@ -192,6 +192,32 @@ const Charts = {
         this.destroy('chart-cape');
         const ctx = document.getElementById('chart-cape').getContext('2d');
 
+        const hasShiller = (DataStore.raw.shiller || []).length > 0;
+        const { confirmed, nowcast, hasNowcast } = this.splitNowcast(data);
+        const datasets = [{
+            label: hasShiller ? 'Shiller CAPE (PE10)' : 'CAPE Ratio (approx)',
+            data: confirmed,
+            borderColor: CONFIG.COLORS.purple,
+            backgroundColor: 'rgba(167, 139, 250, 0.1)',
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3,
+        }];
+        if (hasNowcast) {
+            datasets.push({
+                label: 'Nowcast',
+                data: nowcast,
+                borderColor: CONFIG.COLORS.nowcast,
+                borderWidth: 2,
+                borderDash: [6, 3],
+                pointRadius: data.map(d => d.nowcast ? 4 : 0),
+                pointBackgroundColor: CONFIG.COLORS.nowcast,
+                tension: 0.3,
+                fill: false,
+            });
+        }
+
         this.instances['chart-cape'] = new Chart(ctx, {
             type: 'line',
             data: {
@@ -404,8 +430,10 @@ const Charts = {
         const data = DataStore.processed.cpi;
         if (!data || data.length === 0) return;
 
-        // Show only inflation rate (YoY)
-        const inflData = data.filter(d => d.inflationRate !== null);
+        // Show only inflation rate (YoY) — remap value to inflationRate for splitNowcast
+        const inflData = data
+            .filter(d => d.inflationRate !== null)
+            .map(d => ({ ...d, value: d.inflationRate }));
 
         this.destroy('chart-cpi');
         const ctx = document.getElementById('chart-cpi').getContext('2d');
