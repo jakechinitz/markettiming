@@ -1,5 +1,5 @@
 // Data fetching, processing, and nowcasting module
-// Sources: Yahoo Finance (market data), FRED (economic data)
+// Sources: Yahoo Finance (market data), FRED (economic data), Shiller (earnings/CAPE)
 const DataStore = {
     raw: {},
     processed: {},
@@ -12,6 +12,9 @@ const DataStore = {
         url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     ],
+
+    // Shiller data endpoint (auto-updated weekly from Yale)
+    SHILLER_URL: 'https://posix4e.github.io/shiller_wrapper_data/data/stock_market_data.json',
 
     // ─── Low-level fetchers ──────────────────────────────────────────
 
@@ -127,90 +130,88 @@ const DataStore = {
         throw new Error(`Yahoo failed for ${symbol}: ${lastError?.message || 'all proxies failed'}`);
     },
 
-    // ─── Shiller data fetcher (Yale XLS via CORS proxy) ─────────────
+    // ─── Shiller data fetcher (earnings + CAPE from Yale) ──────────
+    // Returns [{date, sp500, earnings, cape, cpi}, ...]
     async fetchShillerData() {
-        // Ensure SheetJS is loaded (may still be loading via defer)
-        if (typeof XLSX === 'undefined') {
-            await new Promise((resolve, reject) => {
-                const interval = setInterval(() => {
-                    if (typeof XLSX !== 'undefined') { clearInterval(interval); resolve(); }
-                }, 200);
-                setTimeout(() => { clearInterval(interval); reject(new Error('SheetJS not loaded')); }, 10000);
-            });
-        }
-
-        const xlsUrl = 'http://www.econ.yale.edu/~shiller/data/ie_data.xls';
-        for (const makeProxy of this.CORS_PROXIES) {
+        const urls = [
+            this.SHILLER_URL, // direct (GitHub Pages supports CORS)
+            ...this.CORS_PROXIES.map(fn => fn(this.SHILLER_URL)),
+        ];
+        let lastError = null;
+        for (const url of urls) {
             try {
-                const proxied = makeProxy(xlsUrl);
-                console.log(`[Shiller] Trying ${proxied.substring(0, 50)}...`);
-                const resp = await this._fetch(proxied, 30000);
+                console.log(`[Shiller] Trying ${url.substring(0, 60)}...`);
+                const resp = await this._fetch(url, 20000);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const buf = await resp.arrayBuffer();
-                return this._parseShillerXLS(buf);
+                const json = await resp.json();
+
+                // The API wraps data in {data: [...]} or returns array directly
+                const arr = Array.isArray(json) ? json : (json.data || []);
+                if (arr.length === 0) throw new Error('Empty Shiller dataset');
+
+                const parsed = [];
+                for (const row of arr) {
+                    const date = row.date || row.Date;
+                    const earnings = parseFloat(row.earnings || row.Earnings);
+                    const cape = parseFloat(row.cape || row.CAPE || row.PE10 || row.pe10);
+                    const sp500 = parseFloat(row.sp500 || row.SP500 || row.price || row.Price);
+                    const cpi = parseFloat(row.cpi || row.CPI || row['Consumer Price Index']);
+                    if (!date || isNaN(earnings)) continue;
+                    parsed.push({ date, sp500, earnings, cape, cpi });
+                }
+                if (parsed.length < 100) throw new Error(`Only ${parsed.length} valid rows`);
+                console.log(`[Shiller] Loaded ${parsed.length} months of data`);
+                return parsed;
+            } catch (err) {
+                lastError = err;
+            }
+        }
+        throw new Error(`Shiller data failed: ${lastError?.message || 'all sources failed'}`);
+    },
+
+    // ─── Shiller data fetcher (actual S&P 500 earnings + CAPE) ──────
+    // Returns [{date, sp500, earnings, cape, cpi}, ...]
+    async fetchShillerData() {
+        const urls = [
+            this.SHILLER_URL,
+            ...this.CORS_PROXIES.map(fn => fn(this.SHILLER_URL)),
+        ];
+
+        for (const url of urls) {
+            try {
+                console.log(`[Shiller] Trying ${url.substring(0, 50)}...`);
+                const resp = await this._fetch(url, 20000);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const json = await resp.json();
+
+                // Handle both {data: [...]} and [...] formats
+                const rows = Array.isArray(json) ? json : (json.data || json.stock_market || []);
+                if (!Array.isArray(rows) || rows.length === 0) throw new Error('No Shiller data rows');
+
+                const data = [];
+                for (const row of rows) {
+                    const date = row.date || row.Date;
+                    const earnings = parseFloat(row.earnings || row.Earnings);
+                    const cape = parseFloat(row.cape || row.CAPE || row.PE10 || row.pe10);
+                    const sp500 = parseFloat(row.sp500 || row.SP500 || row['S&P Comp.']);
+                    const cpi = parseFloat(row.cpi || row.CPI || row['Consumer Price Index']);
+                    if (!date || isNaN(earnings)) continue;
+                    data.push({
+                        date: date.substring(0, 10),
+                        sp500: isNaN(sp500) ? null : sp500,
+                        earnings,
+                        cape: isNaN(cape) ? null : cape,
+                        cpi: isNaN(cpi) ? null : cpi,
+                    });
+                }
+                if (data.length === 0) throw new Error('No valid Shiller data');
+                console.log(`[Shiller] Loaded ${data.length} months`);
+                return data;
             } catch (err) {
                 console.warn(`[Shiller] Failed: ${err.message}`);
             }
         }
-        throw new Error('Failed to fetch Shiller data from all proxies');
-    },
-
-    _parseShillerXLS(arrayBuffer) {
-        const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
-        const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('data')) || wb.SheetNames[0];
-        const sheet = wb.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
-
-        // Find first data row: column 0 is a decimal like 1871.01
-        let dataStartIdx = -1;
-        for (let i = 0; i < rows.length; i++) {
-            const val = rows[i]?.[0];
-            if (typeof val === 'number' && val > 1800 && val < 2200) {
-                dataStartIdx = i;
-                break;
-            }
-        }
-        if (dataStartIdx === -1) throw new Error('Cannot find data start in Shiller XLS');
-
-        // Identify columns from header rows
-        let capeCol = -1, priceCol = 1, earningsCol = 3, cpiCol = 4, dividendCol = 2;
-        for (let i = Math.max(0, dataStartIdx - 5); i < dataStartIdx; i++) {
-            const row = rows[i];
-            if (!row) continue;
-            for (let j = 0; j < row.length; j++) {
-                const cell = String(row[j] || '').toLowerCase().trim();
-                if (cell.includes('cape') || cell === 'p/e10' || cell === 'pe10') capeCol = j;
-            }
-        }
-
-        const data = [];
-        for (let i = dataStartIdx; i < rows.length; i++) {
-            const row = rows[i];
-            if (!row) continue;
-            const rawDate = row[0];
-            if (typeof rawDate !== 'number' || rawDate < 1800 || rawDate > 2200) continue;
-
-            const year = Math.floor(rawDate);
-            const month = Math.round((rawDate - year) * 100);
-            if (month < 1 || month > 12) continue;
-            const dateStr = `${year}-${String(month).padStart(2, '0')}-01`;
-
-            const price = parseFloat(row[priceCol]);
-            if (isNaN(price) || price <= 0) continue;
-
-            data.push({
-                date: dateStr,
-                price,
-                earnings: row[earningsCol] != null ? parseFloat(row[earningsCol]) || null : null,
-                cpi: row[cpiCol] != null ? parseFloat(row[cpiCol]) || null : null,
-                dividend: row[dividendCol] != null ? parseFloat(row[dividendCol]) || null : null,
-                cape: capeCol >= 0 && row[capeCol] != null ? parseFloat(row[capeCol]) || null : null,
-            });
-        }
-
-        if (data.length === 0) throw new Error('No valid data parsed from Shiller XLS');
-        console.log(`[Shiller] Parsed ${data.length} rows: ${data[0].date} to ${data[data.length - 1].date}`);
-        return data;
+        throw new Error('Shiller data fetch failed (all sources)');
     },
 
     // ─── Fetch with fallback chain ───────────────────────────────────
@@ -278,9 +279,9 @@ const DataStore = {
                 ],
             },
             shiller: {
-                label: 'Shiller Data',
+                label: 'Shiller Earnings/CAPE',
                 sources: [
-                    { name: 'Yale/Shiller', fn: () => this.fetchShillerData() },
+                    { name: 'Shiller/Yale', fn: () => this.fetchShillerData() },
                 ],
             },
         };
@@ -515,135 +516,137 @@ const DataStore = {
 
     computeCAPE() {
         const shiller = this.raw.shiller || [];
-
-        // Primary: use actual Shiller CAPE (PE10) from Yale dataset
-        if (shiller.length > 0) {
-            const cape = shiller
-                .filter(d => d.cape && !isNaN(d.cape) && d.cape > 0)
-                .map(d => ({ date: d.date, value: d.cape, nowcast: false }));
-
-            if (cape.length > 0) {
-                // Extend with nowcast if Shiller data is stale vs live S&P data
-                const sp = this.raw.sp500 || [];
-                if (sp.length > 0) {
-                    const lastCAPE = cape[cape.length - 1];
-                    const lastCAPEDate = new Date(lastCAPE.date);
-                    const latestSPDate = new Date(sp[sp.length - 1].date);
-
-                    if (latestSPDate > lastCAPEDate) {
-                        const spMonthly = this.getMonthlyValues(sp);
-                        const spLookup = {};
-                        spMonthly.forEach(d => { spLookup[d.date.substring(0, 7)] = d.value; });
-                        const lastKey = lastCAPE.date.substring(0, 7);
-                        const spAtLast = spLookup[lastKey];
-
-                        if (spAtLast && spAtLast > 0) {
-                            const monthsAhead = (latestSPDate.getFullYear() - lastCAPEDate.getFullYear()) * 12
-                                + (latestSPDate.getMonth() - lastCAPEDate.getMonth());
-                            for (let m = 1; m <= monthsAhead; m++) {
-                                const d = new Date(lastCAPEDate);
-                                d.setMonth(d.getMonth() + m);
-                                const mKey = d.toISOString().substring(0, 7);
-                                const spNow = spLookup[mKey] || sp[sp.length - 1].value;
-                                // CAPE moves ~proportionally with price (10yr avg earnings barely changes month-to-month)
-                                const ratio = spNow / spAtLast;
-                                cape.push({
-                                    date: d.toISOString().substring(0, 10),
-                                    value: parseFloat((lastCAPE.value * ratio).toFixed(2)),
-                                    nowcast: true,
-                                });
-                            }
-                        }
-                    }
-                }
-
-                this.processed.cape = cape;
-                return;
-            }
-        }
-
-        // Fallback: approximate CAPE from S&P + CPI (no real earnings data)
-        const cpiData = this.raw.cpi || [];
         const sp500Data = this.raw.sp500 || [];
-        if (sp500Data.length === 0 || cpiData.length === 0) {
-            this.processed.cape = [];
-            return;
-        }
-        const monthlySP = this.getMonthlyValues(sp500Data);
-        const monthlyCPI = this.getMonthlyValues(cpiData);
-        const cpiLookup = {};
-        monthlyCPI.forEach(d => { cpiLookup[d.date.substring(0, 7)] = d.value; });
-        const latestCPI = monthlyCPI[monthlyCPI.length - 1].value;
-        const realSP = monthlySP.map(d => {
-            const cpiVal = cpiLookup[d.date.substring(0, 7)] || latestCPI;
-            return { date: d.date, real: d.value * (latestCPI / cpiVal) };
-        });
-        // Use price-to-10yr-avg-real-price as rough proxy (not true CAPE)
-        const cape = [];
-        for (let i = 119; i < realSP.length; i++) {
-            const avg10y = realSP.slice(i - 119, i + 1).reduce((s, d) => s + d.real, 0) / 120;
-            if (avg10y > 0) {
-                cape.push({ date: realSP[i].date, value: parseFloat((realSP[i].real / avg10y * 16.8).toFixed(2)), nowcast: false });
-            }
-        }
-        this.processed.cape = cape;
-    },
+        const cpiData = this.raw.cpi || [];
 
-    computeTrailingPE() {
-        const shiller = this.raw.shiller || [];
-        if (shiller.length === 0) {
-            this.processed.trailingPE = [];
-            return;
-        }
-
-        const pe = shiller
-            .filter(d => d.price && d.earnings && d.earnings > 0)
-            .map(d => ({
-                date: d.date,
-                value: parseFloat((d.price / d.earnings).toFixed(2)),
-                nowcast: false,
-            }));
-
-        // Extend with nowcast using latest S&P price + extrapolated earnings
-        const sp = this.raw.sp500 || [];
-        if (pe.length > 0 && sp.length > 0) {
-            const lastPEDate = new Date(pe[pe.length - 1].date);
-            const latestSPDate = new Date(sp[sp.length - 1].date);
-
-            if (latestSPDate > lastPEDate) {
-                // Estimate monthly earnings growth from last 12 months of Shiller data
-                const withEarnings = shiller.filter(d => d.earnings && d.earnings > 0);
-                let monthlyGrowth = 0;
-                if (withEarnings.length >= 13) {
-                    const e12ago = withEarnings[withEarnings.length - 13].earnings;
-                    const eNow = withEarnings[withEarnings.length - 1].earnings;
-                    monthlyGrowth = Math.pow(eNow / e12ago, 1 / 12) - 1;
+        // Strategy 1: Use Shiller's pre-computed CAPE (based on real earnings)
+        if (shiller.length > 0) {
+            const cape = [];
+            const shillerByMonth = {};
+            shiller.forEach(d => {
+                if (d.cape && d.cape > 0) {
+                    shillerByMonth[d.date.substring(0, 7)] = d.cape;
                 }
-                const lastEarnings = withEarnings[withEarnings.length - 1].earnings;
-                const spMonthly = this.getMonthlyValues(sp);
-                const spLookup = {};
-                spMonthly.forEach(d => { spLookup[d.date.substring(0, 7)] = d.value; });
+            });
 
-                const monthsAhead = (latestSPDate.getFullYear() - lastPEDate.getFullYear()) * 12
-                    + (latestSPDate.getMonth() - lastPEDate.getMonth());
-                for (let m = 1; m <= monthsAhead; m++) {
-                    const d = new Date(lastPEDate);
-                    d.setMonth(d.getMonth() + m);
-                    const mKey = d.toISOString().substring(0, 7);
-                    const spNow = spLookup[mKey] || sp[sp.length - 1].value;
-                    const projE = lastEarnings * Math.pow(1 + monthlyGrowth, m);
-                    if (projE > 0) {
-                        pe.push({
-                            date: d.toISOString().substring(0, 10),
-                            value: parseFloat((spNow / projE).toFixed(2)),
+            // Use Shiller data for historical CAPE
+            const lastShiller = shiller[shiller.length - 1];
+            for (const [monthKey, capeVal] of Object.entries(shillerByMonth)) {
+                cape.push({ date: monthKey + '-01', value: capeVal, nowcast: false });
+            }
+
+            // Extend to present: adjust last Shiller CAPE by recent price change
+            if (lastShiller && lastShiller.cape > 0 && lastShiller.sp500 > 0 && sp500Data.length > 0) {
+                const lastShillerMonth = lastShiller.date.substring(0, 7);
+                const monthlySP = this.getMonthlyValues(sp500Data);
+                for (const sp of monthlySP) {
+                    const spMonth = sp.date.substring(0, 7);
+                    if (spMonth > lastShillerMonth) {
+                        // CAPE scales roughly linearly with price (earnings avg changes slowly)
+                        const priceRatio = sp.value / lastShiller.sp500;
+                        cape.push({
+                            date: sp.date,
+                            value: parseFloat((lastShiller.cape * priceRatio).toFixed(2)),
                             nowcast: true,
                         });
                     }
                 }
             }
+
+            cape.sort((a, b) => a.date.localeCompare(b.date));
+            this.processed.cape = cape;
+            return;
         }
 
-        this.processed.trailingPE = pe;
+        // Strategy 2: Fallback — compute from S&P 500 + CPI with estimated earnings
+        // Uses long-run average earnings yield (~5.5%) as proxy — clearly not ideal
+        if (sp500Data.length > 0 && cpiData.length > 0) {
+            const monthlySP = this.getMonthlyValues(sp500Data);
+            const monthlyCPI = this.getMonthlyValues(cpiData);
+            const cpiLookup = {};
+            monthlyCPI.forEach(d => { cpiLookup[d.date.substring(0, 7)] = d.value; });
+            const latestCPI = monthlyCPI[monthlyCPI.length - 1].value;
+
+            const realSP = monthlySP.map(d => {
+                const cpiVal = cpiLookup[d.date.substring(0, 7)] || latestCPI;
+                return { date: d.date, real: d.value * (latestCPI / cpiVal) };
+            });
+
+            const cape = [];
+            for (let i = 0; i < realSP.length; i++) {
+                const earnings10y = [];
+                for (let j = Math.max(0, i - 119); j <= i; j++) {
+                    earnings10y.push(realSP[j].real * 0.055);
+                }
+                const avgEarnings = earnings10y.reduce((s, e) => s + e, 0) / earnings10y.length;
+                const capeVal = avgEarnings > 0 ? realSP[i].real / avgEarnings : null;
+                if (capeVal !== null && i >= 119) {
+                    cape.push({ date: realSP[i].date, value: capeVal, nowcast: false });
+                }
+            }
+            this.processed.cape = cape;
+            return;
+        }
+
+        this.processed.cape = [];
+    },
+
+    computeTrailingPE() {
+        const shiller = this.raw.shiller || [];
+        const sp500Data = this.raw.sp500 || [];
+
+        // Strategy 1: Compute from Shiller's actual trailing 12-month earnings
+        if (shiller.length > 0) {
+            const pe = [];
+            const lastEntry = shiller[shiller.length - 1];
+
+            for (const d of shiller) {
+                if (d.earnings > 0 && d.sp500 > 0) {
+                    pe.push({
+                        date: d.date.substring(0, 10),
+                        value: parseFloat((d.sp500 / d.earnings).toFixed(2)),
+                        nowcast: false,
+                    });
+                }
+            }
+
+            // Extend to present: use last known earnings with current price
+            if (lastEntry && lastEntry.earnings > 0 && sp500Data.length > 0) {
+                const lastShillerMonth = lastEntry.date.substring(0, 7);
+                const monthlySP = this.getMonthlyValues(sp500Data);
+
+                // Estimate earnings growth: annualized trend from last 12 months of Shiller data
+                let earningsGrowthRate = 0;
+                if (shiller.length >= 13) {
+                    const e12ago = shiller[shiller.length - 13].earnings;
+                    if (e12ago > 0) {
+                        earningsGrowthRate = (lastEntry.earnings / e12ago) - 1; // annual rate
+                    }
+                }
+
+                for (const sp of monthlySP) {
+                    const spMonth = sp.date.substring(0, 7);
+                    if (spMonth > lastShillerMonth) {
+                        // Extrapolate earnings using observed growth rate
+                        const monthsDiff = (new Date(sp.date) - new Date(lastEntry.date)) / (30.44 * 86400000);
+                        const projEarnings = lastEntry.earnings * Math.pow(1 + earningsGrowthRate, monthsDiff / 12);
+                        if (projEarnings > 0) {
+                            pe.push({
+                                date: sp.date,
+                                value: parseFloat((sp.value / projEarnings).toFixed(2)),
+                                nowcast: true,
+                            });
+                        }
+                    }
+                }
+            }
+
+            pe.sort((a, b) => a.date.localeCompare(b.date));
+            this.processed.trailingPE = pe;
+            return;
+        }
+
+        this.processed.trailingPE = [];
     },
 
     // ─── Helpers ──────────────────────────────────────────────────────

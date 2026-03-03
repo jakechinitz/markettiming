@@ -56,7 +56,7 @@
                 <div class="chart-header">
                     <h2>2. Shiller CAPE Ratio</h2>
                     <p class="chart-description">Cyclically Adjusted Price-to-Earnings ratio. Current price divided by the average of 10 years of inflation-adjusted earnings.</p>
-                    <div class="source-link">Source: Robert Shiller, <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Yale Online Data</a> (1881–present)</div>
+                    <div class="source-link">Source: <a href="https://posix4e.github.io/shiller_wrapper_data/" target="_blank">Shiller/Yale data</a> (auto-updated weekly)</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-cape"></canvas>
@@ -66,9 +66,9 @@
             <!-- Trailing P/E -->
             <section class="chart-section">
                 <div class="chart-header">
-                    <h2>3. Trailing P/E — Price to Reported Earnings</h2>
-                    <p class="chart-description">S&P 500 price divided by trailing 12-month reported earnings from Shiller's dataset. Uses actual S&P 500 earnings, not estimates.</p>
-                    <div class="source-link">Source: Robert Shiller, <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Yale Online Data</a></div>
+                    <h2>3. Trailing P/E Ratio</h2>
+                    <p class="chart-description">S&P 500 price divided by trailing 12-month reported earnings. Uses actual earnings from Shiller's dataset, not estimates.</p>
+                    <div class="source-link">Source: <a href="https://posix4e.github.io/shiller_wrapper_data/" target="_blank">Shiller/Yale data</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-pie"></canvas>
@@ -229,6 +229,7 @@
                         <option value="all">All Series</option>
                         <option value="sp500">S&P 500</option>
                         <option value="cape">Shiller CAPE</option>
+                        <option value="trailingPE">Trailing P/E</option>
                         <option value="unemployment">Unemployment Rate</option>
                         <option value="cpi">CPI / Inflation</option>
                         <option value="vix">VIX</option>
@@ -263,14 +264,15 @@
 
                 <div class="about-card">
                     <h3>2. Shiller CAPE Ratio</h3>
-                    <p>Robert Shiller's Cyclically Adjusted Price-to-Earnings ratio smooths earnings over 10 years to remove business cycle effects. It has historically mean-reverted around ~16-17.</p>
-                    <p><strong>Formula:</strong> CAPE = Current Real Price / Average Real Earnings over prior 10 years</p>
+                    <p>Robert Shiller's Cyclically Adjusted Price-to-Earnings ratio smooths earnings over 10 years to remove business cycle effects. It has historically mean-reverted around ~16-17. Data is sourced from <a href="https://posix4e.github.io/shiller_wrapper_data/" target="_blank">Shiller's dataset via Yale</a>, auto-updated weekly.</p>
+                    <p><strong>Formula:</strong> CAPE = Real S&P 500 Price / (10-year average of Real Trailing 12-Month Earnings)</p>
+                    <p><strong>Note:</strong> Uses actual reported S&P 500 earnings, not estimates. Recent months beyond the dataset are extrapolated using price changes.</p>
                 </div>
 
                 <div class="about-card">
-                    <h3>3. Trailing P/E — Price to Reported Earnings</h3>
-                    <p>The S&P 500 price divided by trailing 12-month reported earnings, using actual historical earnings data from Robert Shiller's dataset (1871–present). Unlike CAPE, this uses only 1 year of earnings and is not inflation-adjusted, making it more responsive to current conditions but also more volatile.</p>
-                    <p><strong>Formula:</strong> Trailing P/E = Current S&P 500 Price / Trailing 12-Month Reported Earnings</p>
+                    <h3>3. Trailing P/E Ratio</h3>
+                    <p>Standard price-to-earnings ratio using actual trailing 12-month reported S&P 500 earnings from Shiller's dataset. Unlike CAPE, this does <em>not</em> adjust for the business cycle — it shows what you're paying for the most recent year of earnings.</p>
+                    <p><strong>Formula:</strong> Trailing P/E = S&P 500 Price / Trailing 12-Month Reported Earnings</p>
                 </div>
 
                 <div class="about-card">

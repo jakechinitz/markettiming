@@ -222,7 +222,16 @@ const Charts = {
             type: 'line',
             data: {
                 labels: data.map(d => d.date),
-                datasets,
+                datasets: [{
+                    label: 'Shiller CAPE Ratio',
+                    data: data.map(d => d.value),
+                    borderColor: CONFIG.COLORS.purple,
+                    backgroundColor: 'rgba(167, 139, 250, 0.1)',
+                    fill: true,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.3,
+                }],
             },
             options: {
                 ...this.getBaseOptions(),
@@ -282,7 +291,7 @@ const Charts = {
         }];
         if (hasNowcast) {
             datasets.push({
-                label: 'Nowcast',
+                label: 'Estimated (recent)',
                 data: nowcast,
                 borderColor: CONFIG.COLORS.nowcast,
                 borderWidth: 2,
