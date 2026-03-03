@@ -192,20 +192,37 @@ const Charts = {
         this.destroy('chart-cape');
         const ctx = document.getElementById('chart-cape').getContext('2d');
 
+        const hasShiller = (DataStore.raw.shiller || []).length > 0;
+        const { confirmed, nowcast, hasNowcast } = this.splitNowcast(data);
+        const datasets = [{
+            label: hasShiller ? 'Shiller CAPE (PE10)' : 'CAPE Ratio (approx)',
+            data: confirmed,
+            borderColor: CONFIG.COLORS.purple,
+            backgroundColor: 'rgba(167, 139, 250, 0.1)',
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3,
+        }];
+        if (hasNowcast) {
+            datasets.push({
+                label: 'Nowcast',
+                data: nowcast,
+                borderColor: CONFIG.COLORS.nowcast,
+                borderWidth: 2,
+                borderDash: [6, 3],
+                pointRadius: data.map(d => d.nowcast ? 4 : 0),
+                pointBackgroundColor: CONFIG.COLORS.nowcast,
+                tension: 0.3,
+                fill: false,
+            });
+        }
+
         this.instances['chart-cape'] = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: data.map(d => d.date),
-                datasets: [{
-                    label: 'CAPE Ratio (approx)',
-                    data: data.map(d => d.value),
-                    borderColor: CONFIG.COLORS.purple,
-                    backgroundColor: 'rgba(167, 139, 250, 0.1)',
-                    fill: true,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.3,
-                }],
+                datasets,
             },
             options: {
                 ...this.getBaseOptions(),
@@ -246,57 +263,42 @@ const Charts = {
     },
 
     renderPIE() {
-        // P/IE approximation using CPI-adjusted earnings
-        const cpi = DataStore.processed.cpi;
-        const sp = DataStore.processed.sp500;
-        if (!cpi || cpi.length === 0 || !sp || sp.length === 0) return;
+        const data = DataStore.processed.trailingPE;
+        if (!data || data.length === 0) return;
 
         this.destroy('chart-pie');
         const ctx = document.getElementById('chart-pie').getContext('2d');
 
-        // Build monthly CPI lookup
-        const cpiLookup = {};
-        cpi.forEach(d => { cpiLookup[d.date.substring(0, 7)] = d; });
-
-        // Use monthly S&P and CPI to compute P/IE
-        const monthly = DataStore.getMonthlyValues(DataStore.raw.sp500);
-        const latestCPI = cpi[cpi.length - 1].value;
-        const pieData = [];
-
-        monthly.forEach((d, i) => {
-            if (i < 12) return;
-            const cpiNow = cpiLookup[d.date.substring(0, 7)];
-            const cpiPrev = cpiLookup[monthly[Math.max(0, i - 12)].date.substring(0, 7)];
-            if (!cpiNow || !cpiPrev) return;
-
-            const inflationRate = (cpiNow.value - cpiPrev.value) / cpiPrev.value;
-            // Approximate real P/E adjustment
-            const earningsYield = 0.055; // ~5.5% long-run E/P
-            const nominalE = d.value * earningsYield;
-            const inflationAdj = nominalE * (1 - inflationRate * 0.3); // partial inflation distortion
-            const pie = inflationAdj > 0 ? d.value / inflationAdj : null;
-
-            if (pie !== null && pie < 100) {
-                pieData.push({ date: d.date, value: pie });
-            }
-        });
-
-        if (pieData.length === 0) return;
+        const { confirmed, nowcast, hasNowcast } = this.splitNowcast(data);
+        const datasets = [{
+            label: 'Trailing P/E',
+            data: confirmed,
+            borderColor: CONFIG.COLORS.orange,
+            backgroundColor: 'rgba(251, 146, 60, 0.1)',
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.3,
+        }];
+        if (hasNowcast) {
+            datasets.push({
+                label: 'Nowcast',
+                data: nowcast,
+                borderColor: CONFIG.COLORS.nowcast,
+                borderWidth: 2,
+                borderDash: [6, 3],
+                pointRadius: data.map(d => d.nowcast ? 4 : 0),
+                pointBackgroundColor: CONFIG.COLORS.nowcast,
+                tension: 0.3,
+                fill: false,
+            });
+        }
 
         this.instances['chart-pie'] = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: pieData.map(d => d.date),
-                datasets: [{
-                    label: 'P/IE (approx)',
-                    data: pieData.map(d => d.value),
-                    borderColor: CONFIG.COLORS.orange,
-                    backgroundColor: 'rgba(251, 146, 60, 0.1)',
-                    fill: true,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.3,
-                }],
+                labels: data.map(d => d.date),
+                datasets,
             },
             options: {
                 ...this.getBaseOptions(),
@@ -304,7 +306,7 @@ const Charts = {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
                     y: {
                         ...CONFIG.CHART_DEFAULTS.scales.y,
-                        title: { display: true, text: 'P/IE Ratio', color: '#6b7084', font: { size: 11 } },
+                        title: { display: true, text: 'Trailing P/E Ratio', color: '#6b7084', font: { size: 11 } },
                     },
                 },
             },
@@ -419,8 +421,10 @@ const Charts = {
         const data = DataStore.processed.cpi;
         if (!data || data.length === 0) return;
 
-        // Show only inflation rate (YoY)
-        const inflData = data.filter(d => d.inflationRate !== null);
+        // Show only inflation rate (YoY) — remap value to inflationRate for splitNowcast
+        const inflData = data
+            .filter(d => d.inflationRate !== null)
+            .map(d => ({ ...d, value: d.inflationRate }));
 
         this.destroy('chart-cpi');
         const ctx = document.getElementById('chart-cpi').getContext('2d');

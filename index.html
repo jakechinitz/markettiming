@@ -8,6 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
     <header>
@@ -55,19 +56,19 @@
                 <div class="chart-header">
                     <h2>2. Shiller CAPE Ratio</h2>
                     <p class="chart-description">Cyclically Adjusted Price-to-Earnings ratio. Current price divided by the average of 10 years of inflation-adjusted earnings.</p>
-                    <div class="source-link">Source: Robert Shiller | FRED</div>
+                    <div class="source-link">Source: Robert Shiller, <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Yale Online Data</a> (1881–present)</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-cape"></canvas>
                 </div>
             </section>
 
-            <!-- P/IE -->
+            <!-- Trailing P/E -->
             <section class="chart-section">
                 <div class="chart-header">
-                    <h2>3. P/IE — Price to Inflation-Adjusted Earnings</h2>
-                    <p class="chart-description">Standard P/E overstates earnings during inflation due to FIFO inventory accounting and historical-cost depreciation. P/IE corrects for this.</p>
-                    <div class="source-link">Source: <a href="https://canvas.osam.com/Commentary/BlogPost?Permalink=the-earnings-mirage" target="_blank">OSAM — The Earnings Mirage</a></div>
+                    <h2>3. Trailing P/E — Price to Reported Earnings</h2>
+                    <p class="chart-description">S&P 500 price divided by trailing 12-month reported earnings from Shiller's dataset. Uses actual S&P 500 earnings, not estimates.</p>
+                    <div class="source-link">Source: Robert Shiller, <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Yale Online Data</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-pie"></canvas>
@@ -267,9 +268,9 @@
                 </div>
 
                 <div class="about-card">
-                    <h3>3. P/IE — Price to Inflation-Adjusted Earnings</h3>
-                    <p>From O'Shaughnessy Asset Management's <a href="https://canvas.osam.com/Commentary/BlogPost?Permalink=the-earnings-mirage" target="_blank">"The Earnings Mirage"</a>: standard reported earnings overstate true economic earnings during inflationary periods because of FIFO inventory accounting (understates cost of goods sold) and historical-cost depreciation (understates replacement cost). P/IE corrects for these effects.</p>
-                    <p><strong>Adjustment:</strong> Real Earnings = Reported Earnings − Inventory Inflation Gain − Depreciation Shortfall</p>
+                    <h3>3. Trailing P/E — Price to Reported Earnings</h3>
+                    <p>The S&P 500 price divided by trailing 12-month reported earnings, using actual historical earnings data from Robert Shiller's dataset (1871–present). Unlike CAPE, this uses only 1 year of earnings and is not inflation-adjusted, making it more responsive to current conditions but also more volatile.</p>
+                    <p><strong>Formula:</strong> Trailing P/E = Current S&P 500 Price / Trailing 12-Month Reported Earnings</p>
                 </div>
 
                 <div class="about-card">
@@ -325,7 +326,7 @@
     </main>
 
     <footer>
-        <p>Data from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> & <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> · Updated automatically · Not financial advice</p>
+        <p>Data from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a>, <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> & <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Shiller</a> · Updated automatically · Not financial advice</p>
     </footer>
 
     <script src="config.js"></script>
