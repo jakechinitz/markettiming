@@ -159,6 +159,29 @@ const DataStore = {
         throw new Error(`FRED failed for ${seriesId}: ${errors.slice(0, 3).join(' | ')}`);
     },
 
+
+    // Try multiple free FRED earnings series IDs and return the first usable one
+    async fetchSP500Earnings(startDate = '1990-01-01') {
+        const candidateIds = ['SP500EPS', 'SP500EARNINGS', 'SP500EARN'];
+        const errors = [];
+
+        for (const id of candidateIds) {
+            try {
+                const data = await this.fetchFred(id, startDate);
+                const clean = (data || []).filter(d => d.value != null && d.value > 0);
+                if (clean.length >= 8) {
+                    console.log(`[FRED] Using earnings series ${id} (${clean.length} pts)`);
+                    return clean;
+                }
+                throw new Error(`only ${clean.length} points`);
+            } catch (err) {
+                errors.push(`${id}: ${err.message}`);
+            }
+        }
+
+        throw new Error(`No usable S&P earnings series: ${errors.slice(0, 3).join(' | ')}`);
+    },
+
     // ─── Yahoo Finance fetcher ───────────────────────────────────────
     async fetchYahoo(symbol, startDate) {
         const period1 = Math.floor(new Date(startDate).getTime() / 1000);
@@ -402,6 +425,12 @@ const DataStore = {
                 sources: [
                     { name: 'Yahoo Finance', fn: () => this.fetchYahoo('^GSPC', '2000-01-01') },
                     { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.SP500, '2000-01-01') },
+                ],
+            },
+            sp500Earnings: {
+                label: 'S&P 500 Earnings (FRED)',
+                sources: [
+                    { name: 'FRED', fn: () => this.fetchSP500Earnings('1990-01-01') },
                 ],
             },
             vix: {
@@ -682,6 +711,8 @@ const DataStore = {
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
         const cpiData = this.raw.cpi || [];
+        const earningsModel = this.buildMonthlyEarningsLookup();
+        const MAX_VALUATION_NOWCAST_MONTHS = earningsModel.hasFreshFeed ? 24 : 9;
 
         // Strategy 1: Use Shiller's pre-computed CAPE (based on real earnings)
         if (shiller.length > 0) {
@@ -694,26 +725,38 @@ const DataStore = {
             });
 
             // Use Shiller data for historical CAPE
-            const lastShiller = shiller[shiller.length - 1];
             for (const [monthKey, capeVal] of Object.entries(shillerByMonth)) {
                 cape.push({ date: monthKey + '-01', value: capeVal, nowcast: false });
             }
 
-            // Extend to present: adjust last Shiller CAPE by recent price change
-            if (lastShiller && lastShiller.cape > 0 && lastShiller.sp500 > 0 && sp500Data.length > 0) {
-                const lastShillerMonth = lastShiller.date.substring(0, 7);
+            // Extend to present: adjust latest confirmed CAPE by recent price change
+            const lastConfirmedCAPE = cape[cape.length - 1];
+            const lastConfirmedMonth = lastConfirmedCAPE ? lastConfirmedCAPE.date.substring(0, 7) : null;
+            const baseShiller = lastConfirmedMonth
+                ? shiller.find(d => d.date.substring(0, 7) === lastConfirmedMonth && d.sp500 > 0)
+                : null;
+
+            if (lastConfirmedCAPE && baseShiller && sp500Data.length > 0) {
+                const baseDate = new Date(lastConfirmedCAPE.date);
                 const monthlySP = this.getMonthlyValues(sp500Data);
                 for (const sp of monthlySP) {
                     const spMonth = sp.date.substring(0, 7);
-                    if (spMonth > lastShillerMonth) {
-                        // CAPE scales roughly linearly with price (earnings avg changes slowly)
-                        const priceRatio = sp.value / lastShiller.sp500;
-                        cape.push({
-                            date: sp.date,
-                            value: parseFloat((lastShiller.cape * priceRatio).toFixed(2)),
-                            nowcast: true,
-                        });
-                    }
+                    if (spMonth <= lastConfirmedMonth) continue;
+
+                    const monthsDiff = (new Date(sp.date) - baseDate) / (30.44 * 86400000);
+                    if (monthsDiff > MAX_VALUATION_NOWCAST_MONTHS) continue;
+
+                    // CAPE scales with price and inversely with earnings level.
+                    const monthKey = sp.date.substring(0, 7);
+                    const baseE = earningsModel.lookup[lastConfirmedMonth] || baseShiller.earnings || 1;
+                    const currE = earningsModel.lookup[monthKey] || baseE;
+                    const priceRatio = sp.value / baseShiller.sp500;
+                    const earningsAdj = currE > 0 ? (baseE / currE) : 1;
+                    cape.push({
+                        date: sp.date,
+                        value: parseFloat((lastConfirmedCAPE.value * priceRatio * earningsAdj).toFixed(2)),
+                        nowcast: true,
+                    });
                 }
             }
 
@@ -827,6 +870,7 @@ const DataStore = {
 
         const K = 1.5; // inflation sensitivity coefficient (calibrated to NIPA IVA+CCAdj)
         const pie = [];
+        const earningsModel = this.buildMonthlyEarningsLookup();
 
         // Build CPI lookup from Shiller data for YoY inflation
         const cpiByMonth = {};
@@ -879,12 +923,13 @@ const DataStore = {
             const latestCPIEntry = processedCPI.filter(d => d.inflationRate !== null).pop();
             const latestInflation = latestCPIEntry ? latestCPIEntry.inflationRate / 100 : 0;
 
-            if (lastShiller.earnings > 0) {
-                // Estimate earnings growth rate from last 12 months
+            if (baseShiller) {
+                // Estimate earnings growth rate from last 12 months ending at base point
                 let earningsGrowthRate = 0;
-                if (shiller.length >= 13) {
-                    const e12ago = shiller[shiller.length - 13].earnings;
-                    if (e12ago > 0) earningsGrowthRate = (lastShiller.earnings / e12ago) - 1;
+                const baseIdx = shiller.findIndex(d => d.date.substring(0, 7) === baseMonth);
+                if (baseIdx >= 12) {
+                    const e12ago = shiller[baseIdx - 12].earnings;
+                    if (e12ago > 0) earningsGrowthRate = (baseShiller.earnings / e12ago) - 1;
                 }
 
                 const addProjectedPoint = spPoint => {
@@ -918,6 +963,62 @@ const DataStore = {
     },
 
     // ─── Helpers ──────────────────────────────────────────────────────
+
+
+    _median(values) {
+        if (!values || values.length === 0) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    },
+
+    // Build a monthly earnings lookup that blends Shiller history with fresher FRED earnings.
+    // Returns {lookup, hasFreshFeed} where lookup[YYYY-MM] = earnings estimate for that month.
+    buildMonthlyEarningsLookup() {
+        const shiller = this.raw.shiller || [];
+        const fred = this.raw.sp500Earnings || [];
+        const lookup = {};
+
+        shiller.forEach(d => {
+            if (d.earnings && d.earnings > 0) lookup[d.date.substring(0, 7)] = d.earnings;
+        });
+
+        if (fred.length < 4) return { lookup, hasFreshFeed: false };
+
+        const fredByMonth = {};
+        fred.forEach(d => {
+            if (d.value && d.value > 0) fredByMonth[d.date.substring(0, 7)] = d.value;
+        });
+
+        const scaleSamples = [];
+        Object.keys(fredByMonth).forEach(month => {
+            if (lookup[month] && fredByMonth[month] > 0) {
+                scaleSamples.push(lookup[month] / fredByMonth[month]);
+            }
+        });
+        const scale = this._median(scaleSamples) || 1;
+
+        // Extend month-by-month by carrying the latest quarterly earnings forward
+        const start = new Date(fred[0].date);
+        const end = new Date((this.raw.sp500 || []).slice(-1)[0]?.date || Date.now());
+        let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+
+        const fredSorted = [...fred].sort((a, b) => a.date.localeCompare(b.date));
+        let j = 0;
+        let lastVal = null;
+
+        while (cursor <= end) {
+            const monthKey = cursor.toISOString().substring(0, 7);
+            while (j < fredSorted.length && fredSorted[j].date.substring(0, 7) <= monthKey) {
+                if (fredSorted[j].value > 0) lastVal = fredSorted[j].value;
+                j++;
+            }
+            if (lastVal && !lookup[monthKey]) lookup[monthKey] = lastVal * scale;
+            cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+        }
+
+        return { lookup, hasFreshFeed: true };
+    },
 
     getMonthlyValues(data) {
         const monthly = {};
