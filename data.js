@@ -13,8 +13,12 @@ const DataStore = {
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     ],
 
-    // Shiller data endpoint (auto-updated weekly from Yale)
-    SHILLER_URL: 'https://posix4e.github.io/shiller_wrapper_data/data/stock_market_data.json',
+    // Shiller data sources — tried in order (GitHub-hosted CSV/JSON are CORS-friendly)
+    SHILLER_SOURCES: [
+        'https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv',
+        'https://raw.githubusercontent.com/jamesplease/stock-market-data/master/data.json',
+    ],
+    SHILLER_XLS_URL: 'http://www.econ.yale.edu/~shiller/data/ie_data.xls',
 
     // ─── Low-level fetchers ──────────────────────────────────────────
 
@@ -52,9 +56,21 @@ const DataStore = {
         return `${CONFIG.FRED_BASE_URL}?${params}`;
     },
 
+    // Get valid FRED API keys (filter out placeholders, support URL param for local dev)
+    _getFredKeys() {
+        const keys = (CONFIG.FRED_API_KEYS || []).filter(k => k && !k.startsWith('__'));
+        // Support ?fred_key=xxx URL param for local development
+        try {
+            const urlKey = new URLSearchParams(window.location.search).get('fred_key');
+            if (urlKey && !keys.includes(urlKey)) keys.unshift(urlKey);
+        } catch (e) { /* ignore */ }
+        return keys;
+    },
+
     // ─── FRED fetcher (tries all keys, then proxied) ─────────────────
     async fetchFred(seriesId, startDate) {
-        const keys = CONFIG.FRED_API_KEYS || [];
+        const keys = this._getFredKeys();
+        if (keys.length === 0) throw new Error('No valid FRED API keys configured');
         const errors = [];
 
         // Strategy 1: Direct fetch with each API key
@@ -130,88 +146,180 @@ const DataStore = {
         throw new Error(`Yahoo failed for ${symbol}: ${lastError?.message || 'all proxies failed'}`);
     },
 
-    // ─── Shiller data fetcher (earnings + CAPE from Yale) ──────────
+    // ─── Shiller data fetcher (3-tier fallback) ─────────────────────
     // Returns [{date, sp500, earnings, cape, cpi}, ...]
+    // Source 1: GitHub CSV (datasets/s-and-p-500) — CORS-friendly, data from 1871
+    // Source 2: GitHub JSON (jamesplease/stock-market-data) — CORS-friendly, 1871-2023
+    // Source 3: Yale XLS via CORS proxy — original source, binary format (needs SheetJS)
     async fetchShillerData() {
-        const urls = [
-            this.SHILLER_URL, // direct (GitHub Pages supports CORS)
-            ...this.CORS_PROXIES.map(fn => fn(this.SHILLER_URL)),
-        ];
-        let lastError = null;
-        for (const url of urls) {
-            try {
-                console.log(`[Shiller] Trying ${url.substring(0, 60)}...`);
-                const resp = await this._fetch(url, 20000);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const json = await resp.json();
+        const errors = [];
 
-                // The API wraps data in {data: [...]} or returns array directly
-                const arr = Array.isArray(json) ? json : (json.data || []);
-                if (arr.length === 0) throw new Error('Empty Shiller dataset');
+        // Source 1: GitHub CSV
+        try {
+            console.log('[Shiller] Trying GitHub CSV...');
+            const resp = await this._fetch(this.SHILLER_SOURCES[0], 20000);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const csv = await resp.text();
+            const data = this._parseShillerCSV(csv);
+            if (data.length >= 100) {
+                console.log(`[Shiller] GitHub CSV: ${data.length} months`);
+                return data;
+            }
+            throw new Error(`Only ${data.length} rows`);
+        } catch (err) {
+            errors.push(`CSV: ${err.message}`);
+            console.warn('[Shiller] GitHub CSV failed:', err.message);
+        }
 
-                const parsed = [];
-                for (const row of arr) {
-                    const date = row.date || row.Date;
-                    const earnings = parseFloat(row.earnings || row.Earnings);
-                    const cape = parseFloat(row.cape || row.CAPE || row.PE10 || row.pe10);
-                    const sp500 = parseFloat(row.sp500 || row.SP500 || row.price || row.Price);
-                    const cpi = parseFloat(row.cpi || row.CPI || row['Consumer Price Index']);
-                    if (!date || isNaN(earnings)) continue;
-                    parsed.push({ date, sp500, earnings, cape, cpi });
+        // Source 2: GitHub JSON
+        try {
+            console.log('[Shiller] Trying GitHub JSON...');
+            const resp = await this._fetch(this.SHILLER_SOURCES[1], 20000);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const json = await resp.json();
+            const data = this._parseShillerJSON(json);
+            if (data.length >= 100) {
+                console.log(`[Shiller] GitHub JSON: ${data.length} months`);
+                return data;
+            }
+            throw new Error(`Only ${data.length} rows`);
+        } catch (err) {
+            errors.push(`JSON: ${err.message}`);
+            console.warn('[Shiller] GitHub JSON failed:', err.message);
+        }
+
+        // Source 3: Yale XLS via CORS proxy (needs SheetJS/xlsx library)
+        if (typeof XLSX !== 'undefined') {
+            for (const makeProxy of this.CORS_PROXIES) {
+                try {
+                    const url = makeProxy(this.SHILLER_XLS_URL);
+                    console.log(`[Shiller] Trying Yale XLS via proxy...`);
+                    const resp = await this._fetch(url, 30000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const buf = await resp.arrayBuffer();
+                    const data = this._parseShillerXLS(buf);
+                    if (data.length >= 100) {
+                        console.log(`[Shiller] Yale XLS: ${data.length} months`);
+                        return data;
+                    }
+                    throw new Error(`Only ${data.length} rows`);
+                } catch (err) {
+                    errors.push(`XLS: ${err.message}`);
+                    console.warn('[Shiller] XLS proxy failed:', err.message);
                 }
-                if (parsed.length < 100) throw new Error(`Only ${parsed.length} valid rows`);
-                console.log(`[Shiller] Loaded ${parsed.length} months of data`);
-                return parsed;
-            } catch (err) {
-                lastError = err;
             }
         }
-        throw new Error(`Shiller data failed: ${lastError?.message || 'all sources failed'}`);
+
+        throw new Error(`Shiller data failed: ${errors.slice(0, 3).join(' | ')}`);
     },
 
-    // ─── Shiller data fetcher (actual S&P 500 earnings + CAPE) ──────
-    // Returns [{date, sp500, earnings, cape, cpi}, ...]
-    async fetchShillerData() {
-        const urls = [
-            this.SHILLER_URL,
-            ...this.CORS_PROXIES.map(fn => fn(this.SHILLER_URL)),
-        ];
+    // Parse GitHub CSV (datasets/s-and-p-500 format)
+    // Columns: Date,SP500,Dividend,Earnings,Consumer Price Index,Long Interest Rate,Real Price,Real Dividend,Real Earnings,PE10
+    _parseShillerCSV(csv) {
+        const lines = csv.trim().split('\n');
+        const header = lines[0].split(',');
+        const data = [];
 
-        for (const url of urls) {
-            try {
-                console.log(`[Shiller] Trying ${url.substring(0, 50)}...`);
-                const resp = await this._fetch(url, 20000);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const json = await resp.json();
+        for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].split(',');
+            if (cols.length < 9) continue;
 
-                // Handle both {data: [...]} and [...] formats
-                const rows = Array.isArray(json) ? json : (json.data || json.stock_market || []);
-                if (!Array.isArray(rows) || rows.length === 0) throw new Error('No Shiller data rows');
+            const dateStr = cols[0]; // YYYY-MM format or YYYY-MM-DD
+            const sp500 = parseFloat(cols[1]);
+            const earnings = parseFloat(cols[3]);
+            const cpi = parseFloat(cols[4]);
+            const pe10 = parseFloat(cols[9]);
 
-                const data = [];
-                for (const row of rows) {
-                    const date = row.date || row.Date;
-                    const earnings = parseFloat(row.earnings || row.Earnings);
-                    const cape = parseFloat(row.cape || row.CAPE || row.PE10 || row.pe10);
-                    const sp500 = parseFloat(row.sp500 || row.SP500 || row['S&P Comp.']);
-                    const cpi = parseFloat(row.cpi || row.CPI || row['Consumer Price Index']);
-                    if (!date || isNaN(earnings)) continue;
-                    data.push({
-                        date: date.substring(0, 10),
-                        sp500: isNaN(sp500) ? null : sp500,
-                        earnings,
-                        cape: isNaN(cape) ? null : cape,
-                        cpi: isNaN(cpi) ? null : cpi,
-                    });
-                }
-                if (data.length === 0) throw new Error('No valid Shiller data');
-                console.log(`[Shiller] Loaded ${data.length} months`);
-                return data;
-            } catch (err) {
-                console.warn(`[Shiller] Failed: ${err.message}`);
+            if (!dateStr || isNaN(earnings) || earnings <= 0) continue;
+
+            // Normalize date to YYYY-MM-01
+            const date = dateStr.length <= 7 ? dateStr + '-01' : dateStr.substring(0, 10);
+
+            data.push({
+                date,
+                sp500: isNaN(sp500) ? null : sp500,
+                earnings,
+                cape: isNaN(pe10) ? null : pe10,
+                cpi: isNaN(cpi) ? null : cpi,
+            });
+        }
+        return data;
+    },
+
+    // Parse GitHub JSON (jamesplease/stock-market-data format)
+    // Fields: {date (decimal year), comp, dividend, earnings, cpi, cape, year, month}
+    _parseShillerJSON(json) {
+        const arr = Array.isArray(json) ? json : (json.data || []);
+        const data = [];
+
+        for (const row of arr) {
+            const earnings = parseFloat(row.earnings);
+            if (isNaN(earnings) || earnings <= 0) continue;
+
+            // Convert decimal date (e.g. 2023.5) or {year, month} to YYYY-MM-01
+            let date;
+            if (row.year && row.month) {
+                date = `${row.year}-${String(row.month).padStart(2, '0')}-01`;
+            } else if (row.date) {
+                const yr = Math.floor(parseFloat(row.date));
+                const mo = Math.round((parseFloat(row.date) - yr) * 12) + 1;
+                date = `${yr}-${String(mo).padStart(2, '0')}-01`;
+            } else continue;
+
+            data.push({
+                date,
+                sp500: parseFloat(row.comp) || parseFloat(row.sp500) || null,
+                earnings,
+                cape: parseFloat(row.cape) || null,
+                cpi: parseFloat(row.cpi) || null,
+            });
+        }
+        return data;
+    },
+
+    // Parse Yale XLS (Shiller's ie_data.xls) using SheetJS
+    _parseShillerXLS(arrayBuffer) {
+        const wb = XLSX.read(arrayBuffer, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        const data = [];
+
+        // Find header row (contains "Date" and "P" or "Price")
+        let startRow = 0;
+        for (let i = 0; i < Math.min(rows.length, 20); i++) {
+            const row = rows[i].map(c => String(c).toLowerCase());
+            if (row.includes('date') || row.some(c => c.includes('price'))) {
+                startRow = i + 1;
+                break;
             }
         }
-        throw new Error('Shiller data fetch failed (all sources)');
+
+        for (let i = startRow; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row || row.length < 5) continue;
+
+            const dateVal = parseFloat(row[0]);
+            if (isNaN(dateVal) || dateVal < 1800) continue;
+
+            const yr = Math.floor(dateVal);
+            const mo = Math.round((dateVal - yr) * 100) || 1;
+            const date = `${yr}-${String(mo).padStart(2, '0')}-01`;
+            const sp500 = parseFloat(row[1]);
+            const earnings = parseFloat(row[3]);
+            const cpi = parseFloat(row[4]);
+            const pe10 = parseFloat(row[10]);
+
+            if (isNaN(earnings) || earnings <= 0) continue;
+
+            data.push({
+                date,
+                sp500: isNaN(sp500) ? null : sp500,
+                earnings,
+                cape: isNaN(pe10) ? null : pe10,
+                cpi: isNaN(cpi) ? null : cpi,
+            });
+        }
+        return data;
     },
 
     // ─── Fetch with fallback chain ───────────────────────────────────
@@ -328,6 +436,7 @@ const DataStore = {
         this.processYieldCurve();
         this.computeCAPE();
         this.computeTrailingPE();
+        this.computePIE();
     },
 
     processSP500() {
@@ -647,6 +756,105 @@ const DataStore = {
         }
 
         this.processed.trailingPE = [];
+    },
+
+    // P/IE (Inflation-adjusted Earnings) — OSAM "Earnings Mirage" methodology
+    // Adjusts reported earnings for inflation distortion (FIFO inventory profits + historical-cost depreciation)
+    // Adjusted E = Reported E × (1 - k × YoY_inflation), where k ≈ 1.5
+    // Reference: O'Shaughnessy Asset Management, "The Earnings Mirage"
+    computePIE() {
+        const shiller = this.raw.shiller || [];
+        const sp500Data = this.raw.sp500 || [];
+        if (shiller.length === 0) {
+            this.processed.pie = [];
+            return;
+        }
+
+        const K = 1.5; // inflation sensitivity coefficient (calibrated to NIPA IVA+CCAdj)
+        const pie = [];
+
+        // Build CPI lookup from Shiller data for YoY inflation
+        const cpiByMonth = {};
+        shiller.forEach(d => {
+            if (d.cpi && d.cpi > 0) {
+                cpiByMonth[d.date.substring(0, 7)] = d.cpi;
+            }
+        });
+
+        // Also use FRED CPI if available (more recent)
+        const fredCPI = this.raw.cpi || [];
+        fredCPI.forEach(d => {
+            cpiByMonth[d.date.substring(0, 7)] = d.value;
+        });
+
+        for (let i = 0; i < shiller.length; i++) {
+            const d = shiller[i];
+            if (!d.earnings || d.earnings <= 0 || !d.sp500 || d.sp500 <= 0) continue;
+
+            const monthKey = d.date.substring(0, 7);
+            const cpiNow = cpiByMonth[monthKey];
+
+            // Find CPI from 12 months ago
+            const dt = new Date(d.date);
+            dt.setMonth(dt.getMonth() - 12);
+            const prevKey = dt.toISOString().substring(0, 7);
+            const cpiPrev = cpiByMonth[prevKey];
+
+            if (cpiNow && cpiPrev && cpiPrev > 0) {
+                const yoyInflation = (cpiNow - cpiPrev) / cpiPrev; // e.g. 0.03 for 3%
+                const adjustedEarnings = d.earnings * (1 - K * yoyInflation);
+
+                if (adjustedEarnings > 0) {
+                    pie.push({
+                        date: d.date.substring(0, 10),
+                        value: parseFloat((d.sp500 / adjustedEarnings).toFixed(2)),
+                        nowcast: false,
+                    });
+                }
+            }
+        }
+
+        // Extend to present using latest known inflation-adjusted earnings
+        if (pie.length > 0 && sp500Data.length > 0) {
+            const lastPIE = pie[pie.length - 1];
+            const lastShiller = shiller[shiller.length - 1];
+            const lastShillerMonth = lastShiller.date.substring(0, 7);
+
+            // Get latest inflation rate from processed CPI
+            const processedCPI = this.processed.cpi || [];
+            const latestCPIEntry = processedCPI.filter(d => d.inflationRate !== null).pop();
+            const latestInflation = latestCPIEntry ? latestCPIEntry.inflationRate / 100 : 0;
+
+            if (lastShiller.earnings > 0) {
+                // Estimate earnings growth rate from last 12 months
+                let earningsGrowthRate = 0;
+                if (shiller.length >= 13) {
+                    const e12ago = shiller[shiller.length - 13].earnings;
+                    if (e12ago > 0) earningsGrowthRate = (lastShiller.earnings / e12ago) - 1;
+                }
+
+                const monthlySP = this.getMonthlyValues(sp500Data);
+                for (const sp of monthlySP) {
+                    const spMonth = sp.date.substring(0, 7);
+                    if (spMonth > lastShillerMonth) {
+                        const monthsDiff = (new Date(sp.date) - new Date(lastShiller.date)) / (30.44 * 86400000);
+                        const projEarnings = lastShiller.earnings * Math.pow(1 + earningsGrowthRate, monthsDiff / 12);
+                        const adjEarnings = projEarnings * (1 - K * latestInflation);
+
+                        if (adjEarnings > 0) {
+                            pie.push({
+                                date: sp.date,
+                                value: parseFloat((sp.value / adjEarnings).toFixed(2)),
+                                nowcast: true,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        pie.sort((a, b) => a.date.localeCompare(b.date));
+        this.processed.pie = pie;
     },
 
     // ─── Helpers ──────────────────────────────────────────────────────
