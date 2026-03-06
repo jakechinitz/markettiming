@@ -871,7 +871,6 @@ const DataStore = {
 
         // Extend to present using latest known inflation-adjusted earnings
         if (pie.length > 0 && sp500Data.length > 0) {
-            const lastPIE = pie[pie.length - 1];
             const lastShiller = shiller[shiller.length - 1];
             const lastShillerMonth = lastShiller.date.substring(0, 7);
 
@@ -888,23 +887,29 @@ const DataStore = {
                     if (e12ago > 0) earningsGrowthRate = (lastShiller.earnings / e12ago) - 1;
                 }
 
+                const addProjectedPoint = spPoint => {
+                    const monthsDiff = (new Date(spPoint.date) - new Date(lastShiller.date)) / (30.44 * 86400000);
+                    const projEarnings = lastShiller.earnings * Math.pow(1 + earningsGrowthRate, monthsDiff / 12);
+                    const adjEarnings = projEarnings * (1 - K * latestInflation);
+                    if (adjEarnings <= 0) return;
+                    pie.push({
+                        date: spPoint.date,
+                        value: parseFloat((spPoint.value / adjEarnings).toFixed(2)),
+                        nowcast: true,
+                    });
+                };
+
+                // Monthly continuation from last confirmed Shiller month
                 const monthlySP = this.getMonthlyValues(sp500Data);
                 for (const sp of monthlySP) {
                     const spMonth = sp.date.substring(0, 7);
-                    if (spMonth > lastShillerMonth) {
-                        const monthsDiff = (new Date(sp.date) - new Date(lastShiller.date)) / (30.44 * 86400000);
-                        const projEarnings = lastShiller.earnings * Math.pow(1 + earningsGrowthRate, monthsDiff / 12);
-                        const adjEarnings = projEarnings * (1 - K * latestInflation);
-
-                        if (adjEarnings > 0) {
-                            pie.push({
-                                date: sp.date,
-                                value: parseFloat((sp.value / adjEarnings).toFixed(2)),
-                                nowcast: true,
-                            });
-                        }
-                    }
+                    if (spMonth > lastShillerMonth) addProjectedPoint(sp);
                 }
+
+                // Daily tail so P/IE stays fresh within the current month
+                const latestPIEDate = pie.length > 0 ? pie[pie.length - 1].date : lastShiller.date.substring(0, 10);
+                const dailyTail = sp500Data.filter(d => d.date > latestPIEDate);
+                for (const sp of dailyTail) addProjectedPoint(sp);
             }
         }
 
