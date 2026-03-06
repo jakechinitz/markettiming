@@ -164,11 +164,15 @@
                                 <span class="rule-desc">CAPE below 20 → +1, 20-30 → 0, above 30 → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">5. Investor Allocation <span class="nowcast-badge">3mo lag, nowcast via S&P</span></span>
+                                <span class="rule-name">5. Valuation (P/IE) <span class="nowcast-badge">~2mo lag</span></span>
+                                <span class="rule-desc">P/IE below 22 → +1, 22-32 → 0, above 32 → -1</span>
+                            </div>
+                            <div class="rule">
+                                <span class="rule-name">6. Investor Allocation <span class="nowcast-badge">3mo lag, nowcast via S&P</span></span>
                                 <span class="rule-desc">Equity allocation below 35% → +1, 35-45% → 0, above 45% → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">6. Yield Curve (10Y-2Y) <span class="nowcast-badge">REAL-TIME</span></span>
+                                <span class="rule-name">7. Yield Curve (10Y-2Y) <span class="nowcast-badge">REAL-TIME</span></span>
                                 <span class="rule-desc">Spread above 0% (normal) → +1, below 0% (inverted) → -1</span>
                             </div>
                         </div>
@@ -192,15 +196,25 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td>+6 to +5</td><td class="signal-bullish">Strong Buy</td><td>100%</td></tr>
-                                <tr><td>+4 to +3</td><td class="signal-bullish">Buy</td><td>80%</td></tr>
-                                <tr><td>+2 to 0</td><td class="signal-neutral">Neutral</td><td>60%</td></tr>
-                                <tr><td>-1 to -2</td><td class="signal-bearish">Reduce</td><td>40%</td></tr>
-                                <tr><td>-3 to -6</td><td class="signal-bearish">Defensive</td><td>20%</td></tr>
+                                <tr><td>+7 to +6</td><td class="signal-bullish">Strong Buy</td><td>100%</td></tr>
+                                <tr><td>+5 to +4</td><td class="signal-bullish">Buy</td><td>80%</td></tr>
+                                <tr><td>+3 to +1</td><td class="signal-neutral">Neutral</td><td>60%</td></tr>
+                                <tr><td>0 to -2</td><td class="signal-bearish">Reduce</td><td>40%</td></tr>
+                                <tr><td>-3 to -7</td><td class="signal-bearish">Defensive</td><td>20%</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
+
+                <details class="advanced-options" id="strategy-advanced-options">
+                    <summary>Advanced strategy toggles (optional)</summary>
+                    <div class="advanced-options-grid">
+                        <label class="toggle-item"><input type="checkbox" id="trend_gate_degross"> <span><strong>Trend gate de-grossing</strong><br>Only cut below 80% when composite < +1 AND price < 200-day MA.</span></label>
+                        <label class="toggle-item"><input type="checkbox" id="vix_crisis_cap"> <span><strong>VIX crisis cap</strong><br>Cap equity at 40% when VIX > 30.</span></label>
+                        <label class="toggle-item"><input type="checkbox" id="realized_vol_cap"> <span><strong>Realized volatility cap</strong><br>Use 3m annualized realized vol; cap at 60% if >25%, 40% if >35%.</span></label>
+                        <label class="toggle-item"><input type="checkbox" id="valuation_double_cap"> <span><strong>Valuation double-red cap</strong><br>Cap at 60% when CAPE and P/IE are both expensive.</span></label>
+                    </div>
+                </details>
 
                 <div class="chart-container">
                     <canvas id="chart-strategy"></canvas>

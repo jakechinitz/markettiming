@@ -30,6 +30,7 @@ const CONFIG = {
         EQUITY_ALLOC: 1, // 3-month FRED lag but we nowcast, so treat as ~1 month
         CAPE: 2,        // derived from S&P + CPI, so limited by CPI lag
         YIELD_CURVE: 0, // real-time daily data
+        PIE: 2,         // same lag structure as CAPE (valuation uses CPI/earnings)
     },
 
     // Chart colors
@@ -54,6 +55,8 @@ const CONFIG = {
         VIX_HIGH: 30,
         CAPE_LOW: 20,
         CAPE_HIGH: 30,
+        PIE_LOW: 22,
+        PIE_HIGH: 32,
         ALLOC_LOW: 35,
         ALLOC_HIGH: 45,
         UNEMPLOYMENT_MA_MONTHS: 12,
