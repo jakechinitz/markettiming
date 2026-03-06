@@ -56,6 +56,13 @@ const DataStore = {
         return `${CONFIG.FRED_BASE_URL}?${params}`;
     },
 
+    // Build a FRED CSV URL (no API key required)
+    _fredCsvUrl(seriesId, startDate) {
+        const params = new URLSearchParams({ id: seriesId });
+        if (startDate) params.set('cosd', startDate);
+        return `https://fred.stlouisfed.org/graph/fredgraph.csv?${params}`;
+    },
+
     // Get valid FRED API keys (filter out placeholders, support URL param for local dev)
     _getFredKeys() {
         const keys = (CONFIG.FRED_API_KEYS || []).filter(k => k && !k.startsWith('__'));
@@ -67,10 +74,27 @@ const DataStore = {
         return keys;
     },
 
+    // Parse FRED CSV response into [{date, value}, ...]
+    _parseFredCsv(csv, seriesId) {
+        const lines = csv.trim().split('\n');
+        if (lines.length < 2) throw new Error(`No CSV data for ${seriesId}`);
+
+        const out = [];
+        for (let i = 1; i < lines.length; i++) {
+            const [date, valueRaw] = lines[i].split(',');
+            if (!date || !valueRaw || valueRaw === '.') continue;
+            const value = parseFloat(valueRaw);
+            if (isNaN(value)) continue;
+            out.push({ date, value });
+        }
+
+        if (out.length === 0) throw new Error(`No valid CSV observations for ${seriesId}`);
+        return out;
+    },
+
     // ─── FRED fetcher (tries all keys, then proxied) ─────────────────
     async fetchFred(seriesId, startDate) {
         const keys = this._getFredKeys();
-        if (keys.length === 0) throw new Error('No valid FRED API keys configured');
         const errors = [];
 
         // Strategy 1: Direct fetch with each API key
@@ -101,6 +125,34 @@ const DataStore = {
                 } catch (err) {
                     errors.push(`proxy: ${err.message}`);
                 }
+            }
+        }
+
+        // Strategy 3: FRED CSV endpoint (no API key required)
+        const csvUrl = this._fredCsvUrl(seriesId, startDate);
+
+        // 3a) Direct CSV fetch
+        try {
+            console.log(`[FRED] Trying CSV ${seriesId} direct`);
+            const resp = await this._fetch(csvUrl);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const csv = await resp.text();
+            return this._parseFredCsv(csv, seriesId);
+        } catch (err) {
+            errors.push(`csv-direct: ${err.message}`);
+        }
+
+        // 3b) Proxied CSV fetch
+        for (const makeProxy of this.CORS_PROXIES) {
+            try {
+                const proxied = makeProxy(csvUrl);
+                console.log(`[FRED] Trying CSV ${seriesId} via ${proxied.substring(0, 40)}...`);
+                const resp = await this._fetch(proxied);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const csv = await resp.text();
+                return this._parseFredCsv(csv, seriesId);
+            } catch (err) {
+                errors.push(`csv-proxy: ${err.message}`);
             }
         }
 
