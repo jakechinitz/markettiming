@@ -127,13 +127,13 @@ function renderDataTable(series) {
             ]);
             break;
         }
-        case 'trailingPE': {
-            columns = ['Date', 'Trailing P/E', 'Source'];
-            const data = DataStore.processed.trailingPE || [];
+        case 'pie': {
+            columns = ['Date', 'P/IE Ratio', 'Source'];
+            const data = DataStore.processed.pie || [];
             rows = data.slice(-200).map(d => [
                 d.date,
                 d.value.toFixed(2),
-                d.nowcast ? 'Estimated' : 'Shiller',
+                d.nowcast ? 'Estimated' : 'Shiller/OSAM',
             ]);
             break;
         }
@@ -209,7 +209,7 @@ function renderDataTable(series) {
                 ['Equity Allocation', DataStore.getLatest('equityAlloc')],
                 ['Yield Curve (10Y-2Y)', DataStore.getLatest('yieldCurve')],
                 ['Shiller CAPE', DataStore.getLatest('cape')],
-                ['Trailing P/E', DataStore.getLatest('trailingPE')],
+                ['P/IE (Inflation-Adj)', DataStore.getLatest('pie')],
             ];
             rows = summaries
                 .filter(s => s[1])

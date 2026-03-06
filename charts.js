@@ -222,16 +222,7 @@ const Charts = {
             type: 'line',
             data: {
                 labels: data.map(d => d.date),
-                datasets: [{
-                    label: 'Shiller CAPE Ratio',
-                    data: data.map(d => d.value),
-                    borderColor: CONFIG.COLORS.purple,
-                    backgroundColor: 'rgba(167, 139, 250, 0.1)',
-                    fill: true,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.3,
-                }],
+                datasets,
             },
             options: {
                 ...this.getBaseOptions(),
@@ -272,7 +263,7 @@ const Charts = {
     },
 
     renderPIE() {
-        const data = DataStore.processed.trailingPE;
+        const data = DataStore.processed.pie;
         if (!data || data.length === 0) return;
 
         this.destroy('chart-pie');
@@ -280,7 +271,7 @@ const Charts = {
 
         const { confirmed, nowcast, hasNowcast } = this.splitNowcast(data);
         const datasets = [{
-            label: 'Trailing P/E',
+            label: 'P/IE (Inflation-Adjusted)',
             data: confirmed,
             borderColor: CONFIG.COLORS.orange,
             backgroundColor: 'rgba(251, 146, 60, 0.1)',
@@ -315,7 +306,7 @@ const Charts = {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
                     y: {
                         ...CONFIG.CHART_DEFAULTS.scales.y,
-                        title: { display: true, text: 'Trailing P/E Ratio', color: '#6b7084', font: { size: 11 } },
+                        title: { display: true, text: 'P/IE Ratio', color: '#6b7084', font: { size: 11 } },
                     },
                 },
             },
