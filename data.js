@@ -274,7 +274,7 @@ const DataStore = {
 
         for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',');
-            if (cols.length < 9) continue;
+            if (cols.length < 10) continue;
 
             const dateStr = cols[0]; // YYYY-MM format or YYYY-MM-DD
             const sp500 = parseFloat(cols[1]);
@@ -313,8 +313,10 @@ const DataStore = {
             if (row.year && row.month) {
                 date = `${row.year}-${String(row.month).padStart(2, '0')}-01`;
             } else if (row.date) {
-                const yr = Math.floor(parseFloat(row.date));
-                const mo = Math.round((parseFloat(row.date) - yr) * 12) + 1;
+                const dec = parseFloat(row.date);
+                const yr = Math.floor(dec);
+                const frac = Math.max(0, Math.min(0.999999, dec - yr));
+                const mo = Math.min(12, Math.max(1, Math.floor(frac * 12) + 1));
                 date = `${yr}-${String(mo).padStart(2, '0')}-01`;
             } else continue;
 
@@ -354,7 +356,8 @@ const DataStore = {
             if (isNaN(dateVal) || dateVal < 1800) continue;
 
             const yr = Math.floor(dateVal);
-            const mo = Math.round((dateVal - yr) * 100) || 1;
+            const moRaw = Math.round((dateVal - yr) * 100) || 1;
+            const mo = Math.min(12, Math.max(1, moRaw));
             const date = `${yr}-${String(mo).padStart(2, '0')}-01`;
             const sp500 = parseFloat(row[1]);
             const earnings = parseFloat(row[3]);
@@ -570,7 +573,7 @@ const DataStore = {
             let yoy = null;
             if (i >= 12) {
                 const prev = data[i - 12].value;
-                yoy = ((d.value - prev) / prev) * 100;
+                if (prev > 0) yoy = ((d.value - prev) / prev) * 100;
             }
             return { date: d.date, value: d.value, inflationRate: yoy, nowcast: false };
         });
@@ -590,7 +593,7 @@ const DataStore = {
                 const projCPI = lastCPI.value * Math.pow(1 + avgMoM, m);
                 const refIndex = data.length - (12 - m) - 1;
                 let yoy = null;
-                if (refIndex >= 0) {
+                if (refIndex >= 0 && data[refIndex].value > 0) {
                     yoy = ((projCPI - data[refIndex].value) / data[refIndex].value) * 100;
                 }
                 withInflation.push({
