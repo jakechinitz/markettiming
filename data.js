@@ -512,15 +512,31 @@ const DataStore = {
     // ─── Data processing ─────────────────────────────────────────────
 
     processData() {
-        this.processSP500();
-        this.processUnemployment();
-        this.processCPI();
-        this.processVIX();
-        this.processEquityAllocation();
-        this.processYieldCurve();
-        this.computeCAPE();
-        this.computeTrailingPE();
-        this.computePIE();
+        const steps = [
+            ['sp500', () => this.processSP500()],
+            ['unemployment', () => this.processUnemployment()],
+            ['cpi', () => this.processCPI()],
+            ['vix', () => this.processVIX()],
+            ['equityAlloc', () => this.processEquityAllocation()],
+            ['yieldCurve', () => this.processYieldCurve()],
+            ['cape', () => this.computeCAPE()],
+            ['trailingPE', () => this.computeTrailingPE()],
+            ['pie', () => this.computePIE()],
+        ];
+
+        for (const [key, fn] of steps) {
+            try {
+                fn();
+            } catch (err) {
+                console.error(`[processData] ${key} failed:`, err);
+                if (!this.processed[key]) this.processed[key] = [];
+                this.status[key] = {
+                    ...(this.status[key] || { label: key }),
+                    ok: false,
+                    error: `Processing failed: ${err.message}`,
+                };
+            }
+        }
     },
 
     processSP500() {
