@@ -47,6 +47,22 @@ const Charts = {
         return { confirmed, nowcast, hasNowcast };
     },
 
+    nowcastStyle(data, label = 'Nowcast') {
+        return {
+            label,
+            data,
+            borderColor: 'rgba(167, 139, 250, 0.75)',
+            borderWidth: 1.5,
+            borderDash: [4, 4],
+            pointRadius: Array.isArray(data) ? data.map(v => (v === null ? 0 : 2)) : 2,
+            pointHoverRadius: 3,
+            pointBackgroundColor: 'rgba(167, 139, 250, 0.75)',
+            pointBorderWidth: 0,
+            tension: 0.25,
+            fill: false,
+        };
+    },
+
     renderEquityAllocation() {
         const data = DataStore.processed.equityAlloc;
         if (!data || data.length === 0) return;
@@ -66,17 +82,7 @@ const Charts = {
             tension: 0.3,
         }];
         if (hasNowcast) {
-            datasets.push({
-                label: 'Nowcast',
-                data: nowcast,
-                borderColor: CONFIG.COLORS.nowcast,
-                borderWidth: 2,
-                borderDash: [6, 3],
-                pointRadius: data.map(d => d.nowcast ? 4 : 0),
-                pointBackgroundColor: CONFIG.COLORS.nowcast,
-                tension: 0.3,
-                fill: false,
-            });
+            datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
 
         this.instances['chart-allocation'] = new Chart(ctx, {
@@ -205,17 +211,7 @@ const Charts = {
             tension: 0.3,
         }];
         if (hasNowcast) {
-            datasets.push({
-                label: 'Nowcast',
-                data: nowcast,
-                borderColor: CONFIG.COLORS.nowcast,
-                borderWidth: 2,
-                borderDash: [6, 3],
-                pointRadius: data.map(d => d.nowcast ? 4 : 0),
-                pointBackgroundColor: CONFIG.COLORS.nowcast,
-                tension: 0.3,
-                fill: false,
-            });
+            datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
 
         this.instances['chart-cape'] = new Chart(ctx, {
@@ -281,17 +277,7 @@ const Charts = {
             tension: 0.3,
         }];
         if (hasNowcast) {
-            datasets.push({
-                label: 'Estimated (recent)',
-                data: nowcast,
-                borderColor: CONFIG.COLORS.nowcast,
-                borderWidth: 2,
-                borderDash: [6, 3],
-                pointRadius: data.map(d => d.nowcast ? 4 : 0),
-                pointBackgroundColor: CONFIG.COLORS.nowcast,
-                tension: 0.3,
-                fill: false,
-            });
+            datasets.push(this.nowcastStyle(nowcast, 'Estimated (recent)'));
         }
 
         this.instances['chart-pie'] = new Chart(ctx, {
@@ -341,17 +327,7 @@ const Charts = {
             },
         ];
         if (hasNowcast) {
-            datasets.push({
-                label: 'Nowcast',
-                data: nowcast,
-                borderColor: CONFIG.COLORS.nowcast,
-                borderWidth: 2,
-                borderDash: [6, 3],
-                pointRadius: data.map(d => d.nowcast ? 4 : 0),
-                pointBackgroundColor: CONFIG.COLORS.nowcast,
-                tension: 0.2,
-                fill: false,
-            });
+            datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
 
         this.instances['chart-unemployment'] = new Chart(ctx, {
@@ -441,17 +417,7 @@ const Charts = {
             tension: 0.2,
         }];
         if (hasNowcast) {
-            datasets.push({
-                label: 'Nowcast',
-                data: nowcast,
-                borderColor: CONFIG.COLORS.nowcast,
-                borderWidth: 2,
-                borderDash: [6, 3],
-                pointRadius: inflData.map(d => d.nowcast ? 4 : 0),
-                pointBackgroundColor: CONFIG.COLORS.nowcast,
-                tension: 0.2,
-                fill: false,
-            });
+            datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
 
         this.instances['chart-cpi'] = new Chart(ctx, {
