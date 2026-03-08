@@ -19,6 +19,10 @@ const DataStore = {
         'https://raw.githubusercontent.com/jamesplease/stock-market-data/master/data.json',
     ],
     SHILLER_XLS_URL: 'http://www.econ.yale.edu/~shiller/data/ie_data.xls',
+    CAPE_SOURCES: [
+        'https://www.multpl.com/shiller-pe/table/by-month',
+        'https://en.macromicro.me/series/1632/us-shiller-cape',
+    ],
 
     // ─── Low-level fetchers ──────────────────────────────────────────
 
@@ -219,6 +223,55 @@ const DataStore = {
             }
         }
         throw new Error(`Yahoo failed for ${symbol}: ${lastError?.message || 'all proxies failed'}`);
+    },
+
+
+    // ─── Direct CAPE data fetcher (free web sources) ────────────────
+    async fetchDirectCAPE() {
+        const errors = [];
+        for (const src of this.CAPE_SOURCES) {
+            // try direct then proxied
+            const urls = [src, ...this.CORS_PROXIES.map(make => make(src))];
+            for (const url of urls) {
+                try {
+                    const resp = await this._fetch(url, 20000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const html = await resp.text();
+                    const data = this._parseCAPEHtml(html);
+                    if (data.length >= 24) {
+                        console.log(`[CAPE] Loaded ${data.length} rows from ${src}`);
+                        return data;
+                    }
+                    throw new Error(`only ${data.length} rows`);
+                } catch (err) {
+                    errors.push(`${src}: ${err.message}`);
+                }
+            }
+        }
+        throw new Error(`Direct CAPE failed: ${errors.slice(0, 3).join(' | ')}`);
+    },
+
+    _parseCAPEHtml(html) {
+        // Works for Multpl-like table rows: <td>Jan 2026</td><td>37.21</td>
+        const rows = [];
+        const rowRegex = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
+        let m;
+        while ((m = rowRegex.exec(html)) !== null) {
+            const dateRaw = String(m[1]).replace(/&nbsp;/g, ' ').trim();
+            const valueRaw = String(m[2]).replace(/,/g, '').trim();
+            const val = parseFloat(valueRaw);
+            if (!isFinite(val) || val <= 0) continue;
+
+            const d = new Date(dateRaw + ' 01');
+            if (isNaN(d.getTime())) continue;
+            const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1)).toISOString().substring(0, 10);
+            rows.push({ date, value: val, nowcast: false });
+        }
+
+        // de-dup by month, sort ascending
+        const byMonth = {};
+        rows.forEach(r => { byMonth[r.date.substring(0, 7)] = r; });
+        return Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date));
     },
 
     // ─── Shiller data fetcher (3-tier fallback) ─────────────────────
@@ -468,6 +521,12 @@ const DataStore = {
                 label: 'Yield Curve',
                 sources: [
                     { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y, '1990-01-01') },
+                ],
+            },
+            capeDirect: {
+                label: 'CAPE (direct source)',
+                sources: [
+                    { name: 'Multpl/MacroMicro', fn: () => this.fetchDirectCAPE() },
                 ],
             },
             shiller: {
@@ -724,6 +783,14 @@ const DataStore = {
     },
 
     computeCAPE() {
+        const directCAPE = this.raw.capeDirect || [];
+        if (directCAPE.length > 0) {
+            this.processed.cape = directCAPE
+                .filter(d => d.value && d.value > 0)
+                .map(d => ({ date: d.date, value: d.value, nowcast: false }));
+            return;
+        }
+
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
         const cpiData = this.raw.cpi || [];
@@ -879,10 +946,6 @@ const DataStore = {
     computePIE() {
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
-        if (shiller.length === 0) {
-            this.processed.pie = [];
-            return;
-        }
 
         const K = 1.5; // inflation sensitivity coefficient (calibrated to NIPA IVA+CCAdj)
         const pie = [];
@@ -926,6 +989,32 @@ const DataStore = {
                         nowcast: false,
                     });
                 }
+            }
+        }
+
+
+        // Fallback baseline when Shiller earnings history is unavailable:
+        // use blended monthly earnings lookup + FRED CPI + S&P monthly price.
+        if (pie.length === 0 && sp500Data.length > 0) {
+            const monthlySP = this.getMonthlyValues(sp500Data);
+            for (const sp of monthlySP) {
+                const monthKey = sp.date.substring(0, 7);
+                const e = earningsModel.lookup[monthKey];
+                const cpiNow = cpiByMonth[monthKey];
+                const dt = new Date(sp.date);
+                dt.setMonth(dt.getMonth() - 12);
+                const cpiPrev = cpiByMonth[dt.toISOString().substring(0, 7)];
+                if (!e || e <= 0 || !cpiNow || !cpiPrev || cpiPrev <= 0) continue;
+
+                const yoyInflation = (cpiNow - cpiPrev) / cpiPrev;
+                const adjEarnings = e * (1 - K * yoyInflation);
+                if (adjEarnings <= 0) continue;
+
+                pie.push({
+                    date: sp.date,
+                    value: parseFloat((sp.value / adjEarnings).toFixed(2)),
+                    nowcast: false,
+                });
             }
         }
 
