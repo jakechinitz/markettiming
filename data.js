@@ -783,102 +783,67 @@ const DataStore = {
     },
 
     computeCAPE() {
-        const directCAPE = this.raw.capeDirect || [];
-        if (directCAPE.length > 0) {
-            this.processed.cape = directCAPE
-                .filter(d => d.value && d.value > 0)
-                .map(d => ({ date: d.date, value: d.value, nowcast: false }));
-            return;
-        }
-
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
-        const cpiData = this.raw.cpi || [];
         const earningsModel = this.buildMonthlyEarningsLookup();
-        const MAX_VALUATION_NOWCAST_MONTHS = earningsModel.hasFreshFeed ? 24 : 9;
-
-        // Strategy 1: Use Shiller's pre-computed CAPE (based on real earnings)
-        if (shiller.length > 0) {
-            const cape = [];
-            const shillerByMonth = {};
-            shiller.forEach(d => {
-                if (d.cape && d.cape > 0) {
-                    shillerByMonth[d.date.substring(0, 7)] = d.cape;
-                }
-            });
-
-            // Use Shiller data for historical CAPE
-            for (const [monthKey, capeVal] of Object.entries(shillerByMonth)) {
-                cape.push({ date: monthKey + '-01', value: capeVal, nowcast: false });
-            }
-
-            // Extend to present: adjust latest confirmed CAPE by recent price change
-            const lastConfirmedCAPE = cape[cape.length - 1];
-            const lastConfirmedMonth = lastConfirmedCAPE ? lastConfirmedCAPE.date.substring(0, 7) : null;
-            const baseShiller = lastConfirmedMonth
-                ? shiller.find(d => d.date.substring(0, 7) === lastConfirmedMonth && d.sp500 > 0)
-                : null;
-
-            if (lastConfirmedCAPE && baseShiller && sp500Data.length > 0) {
-                const baseDate = new Date(lastConfirmedCAPE.date);
-                const monthlySP = this.getMonthlyValues(sp500Data);
-                for (const sp of monthlySP) {
-                    const spMonth = sp.date.substring(0, 7);
-                    if (spMonth <= lastConfirmedMonth) continue;
-
-                    const monthsDiff = (new Date(sp.date) - baseDate) / (30.44 * 86400000);
-                    if (monthsDiff > MAX_VALUATION_NOWCAST_MONTHS) continue;
-
-                    // CAPE scales with price and inversely with earnings level.
-                    const monthKey = sp.date.substring(0, 7);
-                    const baseE = earningsModel.lookup[lastConfirmedMonth] || baseShiller.earnings || 1;
-                    const currE = earningsModel.lookup[monthKey] || baseE;
-                    const priceRatio = sp.value / baseShiller.sp500;
-                    const earningsAdj = currE > 0 ? (baseE / currE) : 1;
-                    cape.push({
-                        date: sp.date,
-                        value: parseFloat((lastConfirmedCAPE.value * priceRatio * earningsAdj).toFixed(2)),
-                        nowcast: true,
-                    });
-                }
-            }
-
-            cape.sort((a, b) => a.date.localeCompare(b.date));
-            this.processed.cape = cape;
+        if (sp500Data.length === 0) {
+            this.processed.cape = [];
             return;
         }
 
-        // Strategy 2: Fallback — compute from S&P 500 + CPI with estimated earnings
-        // Uses long-run average earnings yield (~5.5%) as proxy — clearly not ideal
-        if (sp500Data.length > 0 && cpiData.length > 0) {
-            const monthlySP = this.getMonthlyValues(sp500Data);
-            const monthlyCPI = this.getMonthlyValues(cpiData);
-            const cpiLookup = {};
-            monthlyCPI.forEach(d => { cpiLookup[d.date.substring(0, 7)] = d.value; });
-            const latestCPI = monthlyCPI[monthlyCPI.length - 1].value;
+        const monthlySP = this.getMonthlyValues(sp500Data);
+        const cpiByMonth = {};
+        shiller.forEach(d => {
+            if (d.cpi && d.cpi > 0) cpiByMonth[d.date.substring(0, 7)] = d.cpi;
+        });
+        (this.raw.cpi || []).forEach(d => {
+            if (d.value && d.value > 0) cpiByMonth[d.date.substring(0, 7)] = d.value;
+        });
 
-            const realSP = monthlySP.map(d => {
-                const cpiVal = cpiLookup[d.date.substring(0, 7)] || latestCPI;
-                return { date: d.date, real: d.value * (latestCPI / cpiVal) };
-            });
+        const shillerCapeByMonth = {};
+        shiller.forEach(d => {
+            if (d.cape && d.cape > 0) shillerCapeByMonth[d.date.substring(0, 7)] = d.cape;
+        });
 
-            const cape = [];
-            for (let i = 0; i < realSP.length; i++) {
-                const earnings10y = [];
-                for (let j = Math.max(0, i - 119); j <= i; j++) {
-                    earnings10y.push(realSP[j].real * 0.055);
-                }
-                const avgEarnings = earnings10y.reduce((s, e) => s + e, 0) / earnings10y.length;
-                const capeVal = avgEarnings > 0 ? realSP[i].real / avgEarnings : null;
-                if (capeVal !== null && i >= 119) {
-                    cape.push({ date: realSP[i].date, value: capeVal, nowcast: false });
-                }
+        const confirmedShillerMonths = Object.keys(shillerCapeByMonth).sort();
+        const lastConfirmedMonth = confirmedShillerMonths.length > 0 ? confirmedShillerMonths[confirmedShillerMonths.length - 1] : null;
+        const latestKnownCPI = Object.values(cpiByMonth).filter(v => v > 0).slice(-1)[0] || null;
+        const cape = [];
+
+        for (let i = 0; i < monthlySP.length; i++) {
+            if (i < 119) continue;
+
+            const monthKey = monthlySP[i].date.substring(0, 7);
+            const price = monthlySP[i].value;
+            const cpiNow = cpiByMonth[monthKey] || latestKnownCPI;
+            if (!price || price <= 0 || !cpiNow || cpiNow <= 0) continue;
+
+            const realEarningsWindow = [];
+            for (let j = i - 119; j <= i; j++) {
+                const wMonth = monthlySP[j].date.substring(0, 7);
+                const eNominal = earningsModel.lookup[wMonth];
+                const cpiThen = cpiByMonth[wMonth] || latestKnownCPI;
+                if (!eNominal || eNominal <= 0 || !cpiThen || cpiThen <= 0) continue;
+                realEarningsWindow.push(eNominal * (cpiNow / cpiThen));
             }
-            this.processed.cape = cape;
-            return;
+
+            if (realEarningsWindow.length < 100) continue;
+
+            const avgRealE = realEarningsWindow.reduce((s, v) => s + v, 0) / realEarningsWindow.length;
+            if (avgRealE <= 0) continue;
+
+            const computed = price / avgRealE;
+            const shillerCape = shillerCapeByMonth[monthKey];
+            const isNowcast = !lastConfirmedMonth || monthKey > lastConfirmedMonth;
+
+            cape.push({
+                date: monthlySP[i].date,
+                value: parseFloat((shillerCape || computed).toFixed(2)),
+                nowcast: isNowcast,
+            });
         }
 
-        this.processed.cape = [];
+        this.processed.cape = cape;
     },
 
     computeTrailingPE() {
@@ -946,10 +911,15 @@ const DataStore = {
     computePIE() {
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
+        if (sp500Data.length === 0) {
+            this.processed.pie = [];
+            return;
+        }
 
         const K = 1.5; // inflation sensitivity coefficient (calibrated to NIPA IVA+CCAdj)
         const pie = [];
         const earningsModel = this.buildMonthlyEarningsLookup();
+        const monthlySP = this.getMonthlyValues(sp500Data);
 
         // Build CPI lookup from Shiller data for YoY inflation
         const cpiByMonth = {};
@@ -965,102 +935,40 @@ const DataStore = {
             cpiByMonth[d.date.substring(0, 7)] = d.value;
         });
 
-        for (let i = 0; i < shiller.length; i++) {
-            const d = shiller[i];
-            if (!d.earnings || d.earnings <= 0 || !d.sp500 || d.sp500 <= 0) continue;
-
-            const monthKey = d.date.substring(0, 7);
-            const cpiNow = cpiByMonth[monthKey];
-
-            // Find CPI from 12 months ago
-            const dt = new Date(d.date);
-            dt.setMonth(dt.getMonth() - 12);
+        const yoyByMonth = {};
+        for (const [monthKey, cpiNow] of Object.entries(cpiByMonth)) {
+            const dt = new Date(`${monthKey}-01T00:00:00Z`);
+            dt.setUTCMonth(dt.getUTCMonth() - 12);
             const prevKey = dt.toISOString().substring(0, 7);
             const cpiPrev = cpiByMonth[prevKey];
-
             if (cpiNow && cpiPrev && cpiPrev > 0) {
-                const yoyInflation = (cpiNow - cpiPrev) / cpiPrev; // e.g. 0.03 for 3%
-                const adjustedEarnings = d.earnings * (1 - K * yoyInflation);
-
-                if (adjustedEarnings > 0) {
-                    pie.push({
-                        date: d.date.substring(0, 10),
-                        value: parseFloat((d.sp500 / adjustedEarnings).toFixed(2)),
-                        nowcast: false,
-                    });
-                }
+                yoyByMonth[monthKey] = (cpiNow - cpiPrev) / cpiPrev;
             }
         }
 
+        const processedCPI = this.processed.cpi || [];
+        processedCPI.forEach(d => {
+            if (d.inflationRate !== null) yoyByMonth[d.date.substring(0, 7)] = d.inflationRate / 100;
+        });
 
-        // Fallback baseline when Shiller earnings history is unavailable:
-        // use blended monthly earnings lookup + FRED CPI + S&P monthly price.
-        if (pie.length === 0 && sp500Data.length > 0) {
-            const monthlySP = this.getMonthlyValues(sp500Data);
-            for (const sp of monthlySP) {
-                const monthKey = sp.date.substring(0, 7);
-                const e = earningsModel.lookup[monthKey];
-                const cpiNow = cpiByMonth[monthKey];
-                const dt = new Date(sp.date);
-                dt.setMonth(dt.getMonth() - 12);
-                const cpiPrev = cpiByMonth[dt.toISOString().substring(0, 7)];
-                if (!e || e <= 0 || !cpiNow || !cpiPrev || cpiPrev <= 0) continue;
+        const latestInflation = Object.values(yoyByMonth).slice(-1)[0] || 0;
+        const shillerMonths = new Set(shiller.map(d => d.date.substring(0, 7)));
+        const confirmedCutoff = [...shillerMonths].sort().slice(-1)[0] || null;
 
-                const yoyInflation = (cpiNow - cpiPrev) / cpiPrev;
-                const adjEarnings = e * (1 - K * yoyInflation);
-                if (adjEarnings <= 0) continue;
+        for (const sp of monthlySP) {
+            const monthKey = sp.date.substring(0, 7);
+            const e = earningsModel.lookup[monthKey];
+            const yoyInflation = yoyByMonth[monthKey] ?? latestInflation;
+            if (!e || e <= 0 || !isFinite(yoyInflation)) continue;
 
-                pie.push({
-                    date: sp.date,
-                    value: parseFloat((sp.value / adjEarnings).toFixed(2)),
-                    nowcast: false,
-                });
-            }
-        }
+            const adjEarnings = e * (1 - K * yoyInflation);
+            if (adjEarnings <= 0) continue;
 
-        // Extend to present using latest known inflation-adjusted earnings
-        if (pie.length > 0 && sp500Data.length > 0) {
-            const lastShiller = shiller[shiller.length - 1];
-            const lastShillerMonth = lastShiller.date.substring(0, 7);
-
-            // Get latest inflation rate from processed CPI
-            const processedCPI = this.processed.cpi || [];
-            const latestCPIEntry = processedCPI.filter(d => d.inflationRate !== null).pop();
-            const latestInflation = latestCPIEntry ? latestCPIEntry.inflationRate / 100 : 0;
-
-            if (baseShiller) {
-                // Estimate earnings growth rate from last 12 months ending at base point
-                let earningsGrowthRate = 0;
-                const baseIdx = shiller.findIndex(d => d.date.substring(0, 7) === baseMonth);
-                if (baseIdx >= 12) {
-                    const e12ago = shiller[baseIdx - 12].earnings;
-                    if (e12ago > 0) earningsGrowthRate = (baseShiller.earnings / e12ago) - 1;
-                }
-
-                const addProjectedPoint = spPoint => {
-                    const monthsDiff = (new Date(spPoint.date) - new Date(lastShiller.date)) / (30.44 * 86400000);
-                    const projEarnings = lastShiller.earnings * Math.pow(1 + earningsGrowthRate, monthsDiff / 12);
-                    const adjEarnings = projEarnings * (1 - K * latestInflation);
-                    if (adjEarnings <= 0) return;
-                    pie.push({
-                        date: spPoint.date,
-                        value: parseFloat((spPoint.value / adjEarnings).toFixed(2)),
-                        nowcast: true,
-                    });
-                };
-
-                // Monthly continuation from last confirmed Shiller month
-                const monthlySP = this.getMonthlyValues(sp500Data);
-                for (const sp of monthlySP) {
-                    const spMonth = sp.date.substring(0, 7);
-                    if (spMonth > lastShillerMonth) addProjectedPoint(sp);
-                }
-
-                // Daily tail so P/IE stays fresh within the current month
-                const latestPIEDate = pie.length > 0 ? pie[pie.length - 1].date : lastShiller.date.substring(0, 10);
-                const dailyTail = sp500Data.filter(d => d.date > latestPIEDate);
-                for (const sp of dailyTail) addProjectedPoint(sp);
-            }
+            pie.push({
+                date: sp.date,
+                value: parseFloat((sp.value / adjEarnings).toFixed(2)),
+                nowcast: !confirmedCutoff || monthKey > confirmedCutoff,
+            });
         }
 
         pie.sort((a, b) => a.date.localeCompare(b.date));
