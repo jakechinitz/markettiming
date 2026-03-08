@@ -69,6 +69,7 @@ async function loadAllData() {
         Charts.renderAllCharts();
 
         // Render strategy
+        Strategy.initAdvancedControls();
         const signals = Strategy.computeSignals();
         Strategy.renderSignals(signals);
         Strategy.renderStrategyChart();
@@ -189,6 +190,7 @@ function renderDataTable(series) {
                 ['Unemployment', signals.unemployment, signals.unemploymentDetail],
                 ['VIX', signals.vix, signals.vixDetail],
                 ['CAPE', signals.cape, signals.capeDetail],
+                ['P/IE', signals.pie, signals.pieDetail],
                 ['Allocation', signals.allocation, signals.allocationDetail],
                 ['Yield Curve', signals.yieldCurve, signals.yieldCurveDetail],
                 ['Composite', signals.composite, signals.regime],
