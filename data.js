@@ -23,6 +23,9 @@ const DataStore = {
         'https://www.multpl.com/shiller-pe/table/by-month',
         'https://en.macromicro.me/series/1632/us-shiller-cape',
     ],
+    EARNINGS_SOURCES: [
+        'https://www.multpl.com/s-p-500-earnings/table/by-month',
+    ],
 
     // ─── Low-level fetchers ──────────────────────────────────────────
 
@@ -184,6 +187,50 @@ const DataStore = {
         }
 
         throw new Error(`No usable S&P earnings series: ${errors.slice(0, 3).join(' | ')}`);
+    },
+
+    async fetchDirectSPEarnings() {
+        const errors = [];
+        for (const src of this.EARNINGS_SOURCES) {
+            const urls = [src, ...this.CORS_PROXIES.map(make => make(src))];
+            for (const url of urls) {
+                try {
+                    const resp = await this._fetch(url, 20000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const html = await resp.text();
+                    const data = this._parseSPEarningsHtml(html);
+                    if (data.length >= 24) {
+                        console.log(`[Earnings] Loaded ${data.length} rows from ${src}`);
+                        return data;
+                    }
+                    throw new Error(`only ${data.length} rows`);
+                } catch (err) {
+                    errors.push(`${src}: ${err.message}`);
+                }
+            }
+        }
+        throw new Error(`Direct earnings failed: ${errors.slice(0, 3).join(' | ')}`);
+    },
+
+    _parseSPEarningsHtml(html) {
+        const rows = [];
+        const rowRegex = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
+        let m;
+        while ((m = rowRegex.exec(html)) !== null) {
+            const dateRaw = String(m[1]).replace(/&nbsp;/g, ' ').trim();
+            const valueRaw = String(m[2]).replace(/[$,%]/g, '').replace(/,/g, '').trim();
+            const val = parseFloat(valueRaw);
+            if (!isFinite(val) || val <= 0) continue;
+
+            const d = new Date(dateRaw);
+            if (isNaN(d.getTime())) continue;
+            const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().substring(0, 10);
+            rows.push({ date, value: val });
+        }
+
+        const byMonth = {};
+        rows.forEach(r => { byMonth[r.date.substring(0, 7)] = r; });
+        return Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date));
     },
 
     // ─── Yahoo Finance fetcher ───────────────────────────────────────
@@ -481,8 +528,9 @@ const DataStore = {
                 ],
             },
             sp500Earnings: {
-                label: 'S&P 500 Earnings (FRED)',
+                label: 'S&P 500 Earnings',
                 sources: [
+                    { name: 'Multpl', fn: () => this.fetchDirectSPEarnings() },
                     { name: 'FRED', fn: () => this.fetchSP500Earnings('1990-01-01') },
                 ],
             },
@@ -996,7 +1044,44 @@ const DataStore = {
             if (d.earnings && d.earnings > 0) lookup[d.date.substring(0, 7)] = d.earnings;
         });
 
-        if (fred.length < 4) return { lookup, hasFreshFeed: false };
+        const projectForwardFromHistory = () => {
+            const monthKeys = Object.keys(lookup).sort();
+            if (monthKeys.length === 0) return;
+
+            const latestSPDate = (this.raw.sp500 || []).slice(-1)[0]?.date;
+            if (!latestSPDate) return;
+
+            const lastKey = monthKeys[monthKeys.length - 1];
+            const lastVal = lookup[lastKey];
+            if (!lastVal || lastVal <= 0) return;
+
+            const growthSamples = [];
+            for (let i = Math.max(12, monthKeys.length - 36); i < monthKeys.length; i++) {
+                const cur = lookup[monthKeys[i]];
+                const prev = lookup[monthKeys[i - 12]];
+                if (cur && prev && prev > 0) growthSamples.push((cur / prev) - 1);
+            }
+            const annualGrowth = growthSamples.length > 0
+                ? growthSamples.reduce((sum, g) => sum + g, 0) / growthSamples.length
+                : 0;
+
+            const end = new Date(latestSPDate);
+            let cursor = new Date(`${lastKey}-01T00:00:00Z`);
+            while (cursor < end) {
+                cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+                const mk = cursor.toISOString().substring(0, 7);
+                if (lookup[mk]) continue;
+                const monthsDiff = (cursor.getUTCFullYear() - parseInt(lastKey.substring(0, 4), 10)) * 12
+                    + (cursor.getUTCMonth() - (parseInt(lastKey.substring(5, 7), 10) - 1));
+                const projected = lastVal * Math.pow(1 + annualGrowth, monthsDiff / 12);
+                if (projected > 0) lookup[mk] = projected;
+            }
+        };
+
+        if (fred.length < 4) {
+            projectForwardFromHistory();
+            return { lookup, hasFreshFeed: false };
+        }
 
         const fredByMonth = {};
         fred.forEach(d => {
