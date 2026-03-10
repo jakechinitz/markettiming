@@ -26,6 +26,9 @@ const DataStore = {
     EARNINGS_SOURCES: [
         'https://www.multpl.com/s-p-500-earnings/table/by-month',
     ],
+    PE_RATIO_SOURCES: [
+        'https://www.multpl.com/s-p-500-pe-ratio/table/by-month',
+    ],
 
     // ─── Low-level fetchers ──────────────────────────────────────────
 
@@ -231,6 +234,87 @@ const DataStore = {
         const byMonth = {};
         rows.forEach(r => { byMonth[r.date.substring(0, 7)] = r; });
         return Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date));
+    },
+
+    // ─── Yahoo Finance S&P 500 earnings (derived from trailing PE) ───
+    async fetchYahooSPEarnings() {
+        // Yahoo v6/v10 quote endpoints provide trailingPE for ^GSPC
+        // We derive: EPS = regularMarketPrice / trailingPE
+        const endpoints = [
+            'https://query1.finance.yahoo.com/v6/finance/quote?symbols=%5EGSPC',
+            'https://query2.finance.yahoo.com/v6/finance/quote?symbols=%5EGSPC',
+            'https://query1.finance.yahoo.com/v10/finance/quoteSummary/%5EGSPC?modules=defaultKeyStatistics,price',
+        ];
+        const errors = [];
+
+        for (const baseUrl of endpoints) {
+            const urlsToTry = [baseUrl, ...this.CORS_PROXIES.map(make => make(baseUrl))];
+            for (const url of urlsToTry) {
+                try {
+                    const resp = await this._fetch(url, 15000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const json = await resp.json();
+
+                    let price, trailingPE;
+
+                    // v6 format: { quoteResponse: { result: [{ regularMarketPrice, trailingPE }] } }
+                    const v6 = json?.quoteResponse?.result?.[0];
+                    if (v6) {
+                        price = v6.regularMarketPrice;
+                        trailingPE = v6.trailingPE;
+                    }
+
+                    // v10 format: { quoteSummary: { result: [{ price, defaultKeyStatistics }] } }
+                    if (!trailingPE) {
+                        const v10 = json?.quoteSummary?.result?.[0];
+                        price = price || v10?.price?.regularMarketPrice?.raw;
+                        trailingPE = v10?.defaultKeyStatistics?.trailingPE?.raw
+                            || v10?.defaultKeyStatistics?.trailingPe?.raw;
+                    }
+
+                    if (!price || !trailingPE || trailingPE <= 0) {
+                        throw new Error('Missing price or trailingPE in response');
+                    }
+
+                    const eps = parseFloat((price / trailingPE).toFixed(2));
+                    if (!isFinite(eps) || eps <= 0) throw new Error(`Invalid derived EPS: ${eps}`);
+
+                    const now = new Date();
+                    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+                        .toISOString().substring(0, 10);
+
+                    console.log(`[Yahoo Earnings] Derived EPS=${eps} from price=${price}, PE=${trailingPE}`);
+                    return [{ date, value: eps }];
+                } catch (err) {
+                    errors.push(`${url.substring(0, 50)}: ${err.message}`);
+                }
+            }
+        }
+        throw new Error(`Yahoo earnings failed: ${errors.slice(0, 3).join(' | ')}`);
+    },
+
+    // ─── Derive earnings from Multpl trailing PE + S&P price ──────
+    async fetchDerivedEarningsFromPE() {
+        const errors = [];
+        for (const src of this.PE_RATIO_SOURCES) {
+            const urls = [src, ...this.CORS_PROXIES.map(make => make(src))];
+            for (const url of urls) {
+                try {
+                    const resp = await this._fetch(url, 20000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const html = await resp.text();
+                    // Same HTML table format as earnings page
+                    const peData = this._parseSPEarningsHtml(html);
+                    if (peData.length < 24) throw new Error(`only ${peData.length} PE rows`);
+                    console.log(`[PE-Derived] Loaded ${peData.length} PE ratio rows from ${src}`);
+                    // Return PE ratios — will be converted to earnings in buildMonthlyEarningsLookup
+                    return peData;
+                } catch (err) {
+                    errors.push(`${src}: ${err.message}`);
+                }
+            }
+        }
+        throw new Error(`PE ratio fetch failed: ${errors.slice(0, 3).join(' | ')}`);
     },
 
     // ─── Yahoo Finance fetcher ───────────────────────────────────────
@@ -531,7 +615,14 @@ const DataStore = {
                 label: 'S&P 500 Earnings',
                 sources: [
                     { name: 'Multpl', fn: () => this.fetchDirectSPEarnings() },
+                    { name: 'Yahoo Finance', fn: () => this.fetchYahooSPEarnings() },
                     { name: 'FRED', fn: () => this.fetchSP500Earnings('1990-01-01') },
+                ],
+            },
+            sp500PERatio: {
+                label: 'S&P 500 Trailing PE',
+                sources: [
+                    { name: 'Multpl PE', fn: () => this.fetchDerivedEarningsFromPE() },
                 ],
             },
             vix: {
@@ -1033,18 +1124,117 @@ const DataStore = {
         return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
     },
 
-    // Build a monthly earnings lookup that blends Shiller history with fresher FRED earnings.
+    // Build a monthly earnings lookup that blends Shiller history with fresher data sources.
+    // Priority: Shiller (historical) → FRED/Multpl earnings → PE-derived earnings → Yahoo spot → projection
     // Returns {lookup, hasFreshFeed} where lookup[YYYY-MM] = earnings estimate for that month.
     buildMonthlyEarningsLookup() {
         const shiller = this.raw.shiller || [];
         const fred = this.raw.sp500Earnings || [];
         const lookup = {};
+        let hasFreshFeed = false;
 
+        // Layer 1: Shiller historical earnings (most authoritative for past data)
         shiller.forEach(d => {
             if (d.earnings && d.earnings > 0) lookup[d.date.substring(0, 7)] = d.earnings;
         });
 
-        const projectForwardFromHistory = () => {
+        // Layer 2: Blend in FRED/Multpl direct earnings (fills gaps & extends forward)
+        if (fred.length >= 4) {
+            const fredByMonth = {};
+            fred.forEach(d => {
+                if (d.value && d.value > 0) fredByMonth[d.date.substring(0, 7)] = d.value;
+            });
+
+            // Compute scale factor to align FRED earnings to Shiller's basis
+            const scaleSamples = [];
+            Object.keys(fredByMonth).forEach(month => {
+                if (lookup[month] && fredByMonth[month] > 0) {
+                    scaleSamples.push(lookup[month] / fredByMonth[month]);
+                }
+            });
+            const scale = this._median(scaleSamples) || 1;
+
+            // Extend month-by-month, carrying latest quarterly forward
+            const fredSorted = [...fred].sort((a, b) => a.date.localeCompare(b.date));
+            const start = new Date(fredSorted[0].date);
+            const end = new Date((this.raw.sp500 || []).slice(-1)[0]?.date || Date.now());
+            let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+            let j = 0;
+            let lastVal = null;
+
+            while (cursor <= end) {
+                const monthKey = cursor.toISOString().substring(0, 7);
+                while (j < fredSorted.length && fredSorted[j].date.substring(0, 7) <= monthKey) {
+                    if (fredSorted[j].value > 0) lastVal = fredSorted[j].value;
+                    j++;
+                }
+                if (lastVal && !lookup[monthKey]) lookup[monthKey] = lastVal * scale;
+                cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+            }
+            hasFreshFeed = true;
+        }
+
+        // Layer 3: Derive earnings from Multpl trailing PE ratios + S&P prices
+        // If we have PE ratio data, earnings = price / PE for each month
+        const peData = this.raw.sp500PERatio || [];
+        const sp500Data = this.raw.sp500 || [];
+        if (peData.length > 0 && sp500Data.length > 0) {
+            const monthlySP = {};
+            sp500Data.forEach(d => { monthlySP[d.date.substring(0, 7)] = d.value; });
+
+            const peByMonth = {};
+            peData.forEach(d => { peByMonth[d.date.substring(0, 7)] = d.value; });
+
+            // Compute scale factor where we have overlap with existing lookup
+            const peScaleSamples = [];
+            for (const [month, pe] of Object.entries(peByMonth)) {
+                const price = monthlySP[month];
+                if (lookup[month] && pe > 0 && price > 0) {
+                    const derivedE = price / pe;
+                    peScaleSamples.push(lookup[month] / derivedE);
+                }
+            }
+            const peScale = this._median(peScaleSamples) || 1;
+
+            // Fill gaps using PE-derived earnings (scaled to match Shiller basis)
+            for (const [month, pe] of Object.entries(peByMonth)) {
+                if (lookup[month]) continue; // don't overwrite existing data
+                const price = monthlySP[month];
+                if (pe > 0 && price > 0) {
+                    const derived = (price / pe) * peScale;
+                    if (derived > 0) {
+                        lookup[month] = derived;
+                        hasFreshFeed = true;
+                    }
+                }
+            }
+
+            // Also extend the last PE-derived value to fill remaining gaps
+            const peMonths = Object.keys(peByMonth).sort();
+            const lastPEMonth = peMonths[peMonths.length - 1];
+            const lastPE = peByMonth[lastPEMonth];
+            if (lastPE > 0) {
+                const latestSPDate = sp500Data[sp500Data.length - 1]?.date;
+                if (latestSPDate) {
+                    const end = new Date(latestSPDate);
+                    let cursor = new Date(`${lastPEMonth}-01T00:00:00Z`);
+                    while (cursor <= end) {
+                        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+                        const mk = cursor.toISOString().substring(0, 7);
+                        if (lookup[mk]) continue;
+                        const price = monthlySP[mk];
+                        if (price > 0) {
+                            // Use last known PE to derive earnings for recent months
+                            const derived = (price / lastPE) * peScale;
+                            if (derived > 0) lookup[mk] = derived;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Layer 4: Project forward from last known earnings (growth-rate extrapolation)
+        const projectForward = () => {
             const monthKeys = Object.keys(lookup).sort();
             if (monthKeys.length === 0) return;
 
@@ -1078,44 +1268,10 @@ const DataStore = {
             }
         };
 
-        if (fred.length < 4) {
-            projectForwardFromHistory();
-            return { lookup, hasFreshFeed: false };
-        }
+        // Always try to project forward to fill any remaining gaps
+        projectForward();
 
-        const fredByMonth = {};
-        fred.forEach(d => {
-            if (d.value && d.value > 0) fredByMonth[d.date.substring(0, 7)] = d.value;
-        });
-
-        const scaleSamples = [];
-        Object.keys(fredByMonth).forEach(month => {
-            if (lookup[month] && fredByMonth[month] > 0) {
-                scaleSamples.push(lookup[month] / fredByMonth[month]);
-            }
-        });
-        const scale = this._median(scaleSamples) || 1;
-
-        // Extend month-by-month by carrying the latest quarterly earnings forward
-        const start = new Date(fred[0].date);
-        const end = new Date((this.raw.sp500 || []).slice(-1)[0]?.date || Date.now());
-        let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-
-        const fredSorted = [...fred].sort((a, b) => a.date.localeCompare(b.date));
-        let j = 0;
-        let lastVal = null;
-
-        while (cursor <= end) {
-            const monthKey = cursor.toISOString().substring(0, 7);
-            while (j < fredSorted.length && fredSorted[j].date.substring(0, 7) <= monthKey) {
-                if (fredSorted[j].value > 0) lastVal = fredSorted[j].value;
-                j++;
-            }
-            if (lastVal && !lookup[monthKey]) lookup[monthKey] = lastVal * scale;
-            cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-        }
-
-        return { lookup, hasFreshFeed: true };
+        return { lookup, hasFreshFeed };
     },
 
     getMonthlyValues(data) {
