@@ -982,6 +982,27 @@ const DataStore = {
             });
         }
 
+        // Layer 2: Fill in / extend with directly-fetched CAPE values (Multpl/MacroMicro)
+        // These are pre-computed Shiller CAPE values that may be more up-to-date than our calculation
+        const directCape = this.raw.capeDirect || [];
+        if (directCape.length > 0) {
+            const capeByMonth = {};
+            cape.forEach(d => { capeByMonth[d.date.substring(0, 7)] = true; });
+
+            for (const d of directCape) {
+                const mk = d.date.substring(0, 7);
+                if (!capeByMonth[mk] && d.value > 0) {
+                    cape.push({
+                        date: d.date,
+                        value: d.value,
+                        nowcast: !lastConfirmedMonth || mk > lastConfirmedMonth,
+                    });
+                    capeByMonth[mk] = true;
+                }
+            }
+            cape.sort((a, b) => a.date.localeCompare(b.date));
+        }
+
         this.processed.cape = cape;
     },
 
