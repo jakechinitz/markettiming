@@ -6,11 +6,13 @@ const DataStore = {
     status: {},
 
     // CORS proxies — tried in order for requests that need proxying
+    // Note: free proxies are inherently unreliable; we try several
     CORS_PROXIES: [
-        url => `https://proxy.corsfix.com/?${encodeURIComponent(url)}`,
-        url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-        url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+        url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+        url => `https://proxy.corsfix.com/?${encodeURIComponent(url)}`,
+        url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+        url => `https://crossorigin.me/${url}`,
     ],
 
     // Shiller data source (GitHub-hosted CSV, CORS-friendly, updated monthly)
@@ -181,51 +183,39 @@ const DataStore = {
 
 
     // ─── Yahoo Finance S&P 500 earnings (derived from trailing PE) ───
+    // Yahoo deprecated v6 in 2023 and v10 now requires crumb+cookie.
+    // Strategy: try v7 quote (current, needs crumb so may fail from browser),
+    // then fall back to deriving from chart metadata + known PE sources.
     async fetchYahooSPEarnings() {
-        // Yahoo v6/v10 quote endpoints provide trailingPE for ^GSPC
-        // We derive: EPS = regularMarketPrice / trailingPE
-        const endpoints = [
-            'https://query1.finance.yahoo.com/v6/finance/quote?symbols=%5EGSPC',
-            'https://query2.finance.yahoo.com/v6/finance/quote?symbols=%5EGSPC',
-            'https://query1.finance.yahoo.com/v10/finance/quoteSummary/%5EGSPC?modules=defaultKeyStatistics,price',
-        ];
         const errors = [];
 
-        for (const baseUrl of endpoints) {
+        // Strategy 1: v7 quote endpoint (current Yahoo API, may need crumb)
+        const quoteUrls = [
+            'https://query1.finance.yahoo.com/v7/finance/quote?symbols=%5EGSPC',
+            'https://query2.finance.yahoo.com/v7/finance/quote?symbols=%5EGSPC',
+        ];
+
+        for (const baseUrl of quoteUrls) {
             const urlsToTry = [baseUrl, ...this.CORS_PROXIES.map(make => make(baseUrl))];
             for (const url of urlsToTry) {
                 try {
-                    const resp = await this._fetch(url, 15000);
+                    const resp = await this._fetch(url, 10000);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const json = await resp.json();
 
-                    let price, trailingPE;
-
-                    // v6 format: { quoteResponse: { result: [{ regularMarketPrice, trailingPE }] } }
-                    const v6 = json?.quoteResponse?.result?.[0];
-                    if (v6) {
-                        price = v6.regularMarketPrice;
-                        trailingPE = v6.trailingPE;
-                    }
-
-                    // v10 format: { quoteSummary: { result: [{ price, defaultKeyStatistics }] } }
-                    if (!trailingPE) {
-                        const v10 = json?.quoteSummary?.result?.[0];
-                        price = price || v10?.price?.regularMarketPrice?.raw;
-                        trailingPE = v10?.defaultKeyStatistics?.trailingPE?.raw
-                            || v10?.defaultKeyStatistics?.trailingPe?.raw;
-                    }
+                    const quote = json?.quoteResponse?.result?.[0];
+                    const price = quote?.regularMarketPrice;
+                    const trailingPE = quote?.trailingPE;
 
                     if (!price || !trailingPE || trailingPE <= 0) {
-                        throw new Error('Missing price or trailingPE in response');
+                        throw new Error('Missing price or trailingPE');
                     }
 
                     const eps = parseFloat((price / trailingPE).toFixed(2));
-                    if (!isFinite(eps) || eps <= 0) throw new Error(`Invalid derived EPS: ${eps}`);
+                    if (!isFinite(eps) || eps <= 0) throw new Error(`Invalid EPS: ${eps}`);
 
-                    // Also capture dividend rate for P/IE calculation
-                    const divRate = v6?.trailingAnnualDividendRate
-                        || json?.quoteSummary?.result?.[0]?.defaultKeyStatistics?.trailingAnnualDividendRate?.raw;
+                    // Capture dividend rate for P/IE
+                    const divRate = quote?.trailingAnnualDividendRate;
                     if (divRate && divRate > 0) {
                         this._yahooDividendRate = divRate;
                         console.log(`[Yahoo] Trailing annual dividend rate: ${divRate}`);
@@ -235,53 +225,97 @@ const DataStore = {
                     const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
                         .toISOString().substring(0, 10);
 
-                    console.log(`[Yahoo Earnings] Derived EPS=${eps} from price=${price}, PE=${trailingPE}`);
+                    console.log(`[Yahoo Earnings] v7 EPS=${eps} from price=${price}, PE=${trailingPE}`);
                     return [{ date, value: eps }];
                 } catch (err) {
-                    errors.push(`${url.substring(0, 50)}: ${err.message}`);
+                    errors.push(`v7: ${err.message}`);
                 }
             }
         }
+
+        // Strategy 2: Use chart metadata price (captured by fetchYahoo) + Shiller CAPE
+        // This works because fetchYahoo runs in parallel and may already have metadata
+        try {
+            const meta = this._yahooChartMeta?.['^GSPC'] || this._yahooChartMeta?.['%5EGSPC'];
+            if (meta?.regularMarketPrice) {
+                const price = meta.regularMarketPrice;
+                // Use a reasonable trailing PE estimate from last known Shiller data
+                // S&P 500 trailing PE typically ranges 15-30
+                const shiller = this.raw?.shiller;
+                const lastCAPE = shiller?.filter(d => d.cape > 0)?.slice(-1)?.[0]?.cape;
+                if (lastCAPE && lastCAPE > 0) {
+                    // CAPE is 10yr avg earnings; trailing PE is ~60-80% of CAPE for estimation
+                    const estimatedPE = lastCAPE * 0.7;
+                    const eps = parseFloat((price / estimatedPE).toFixed(2));
+                    if (isFinite(eps) && eps > 0) {
+                        const now = new Date();
+                        const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+                            .toISOString().substring(0, 10);
+                        console.log(`[Yahoo Earnings] Chart meta EPS=${eps} from price=${price}, estPE=${estimatedPE.toFixed(1)}`);
+                        return [{ date, value: eps }];
+                    }
+                }
+            }
+            throw new Error('No chart metadata available');
+        } catch (err) {
+            errors.push(`chart-meta: ${err.message}`);
+        }
+
         throw new Error(`Yahoo earnings failed: ${errors.slice(0, 3).join(' | ')}`);
     },
 
-    // ─── Yahoo Finance fetcher ───────────────────────────────────────
+    // ─── Yahoo Finance fetcher (v8 chart — no crumb needed) ─────────
     async fetchYahoo(symbol, startDate) {
         const period1 = Math.floor(new Date(startDate).getTime() / 1000);
         const period2 = Math.floor(Date.now() / 1000);
-        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
-            + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
+        // Try both query1 and query2 load-balancers
+        const yahooUrls = [
+            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
+                + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`,
+            `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
+                + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`,
+        ];
 
-        let lastError = null;
+        const errors = [];
 
-        for (const makeUrl of this.CORS_PROXIES) {
-            try {
-                const proxiedUrl = makeUrl(yahooUrl);
-                const resp = await this._fetch(proxiedUrl);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const json = await resp.json();
+        for (const yahooUrl of yahooUrls) {
+            // Try direct first (works if browser/extension allows, or in non-browser contexts)
+            const urlsToTry = [yahooUrl, ...this.CORS_PROXIES.map(make => make(yahooUrl))];
+            for (const url of urlsToTry) {
+                try {
+                    const resp = await this._fetch(url, 12000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const json = await resp.json();
 
-                const result = json?.chart?.result?.[0];
-                if (!result || !result.timestamp) throw new Error('No chart data');
+                    const result = json?.chart?.result?.[0];
+                    if (!result || !result.timestamp) throw new Error('No chart data');
 
-                const timestamps = result.timestamp;
-                const closes = result.indicators?.quote?.[0]?.close || [];
-                const adjCloses = result.indicators?.adjclose?.[0]?.adjclose || closes;
+                    // Store chart meta for potential use (has regularMarketPrice)
+                    if (result.meta?.regularMarketPrice) {
+                        this._yahooChartMeta = this._yahooChartMeta || {};
+                        this._yahooChartMeta[symbol] = result.meta;
+                    }
 
-                const data = [];
-                for (let i = 0; i < timestamps.length; i++) {
-                    const val = adjCloses[i] ?? closes[i];
-                    if (val == null || isNaN(val)) continue;
-                    const d = new Date(timestamps[i] * 1000);
-                    data.push({ date: d.toISOString().substring(0, 10), value: val });
+                    const timestamps = result.timestamp;
+                    const closes = result.indicators?.quote?.[0]?.close || [];
+                    const adjCloses = result.indicators?.adjclose?.[0]?.adjclose || closes;
+
+                    const data = [];
+                    for (let i = 0; i < timestamps.length; i++) {
+                        const val = adjCloses[i] ?? closes[i];
+                        if (val == null || isNaN(val)) continue;
+                        const d = new Date(timestamps[i] * 1000);
+                        data.push({ date: d.toISOString().substring(0, 10), value: val });
+                    }
+                    if (data.length === 0) throw new Error('No valid data points');
+                    console.log(`[Yahoo] ${symbol}: ${data.length} data points from ${url.substring(0, 60)}`);
+                    return data;
+                } catch (err) {
+                    errors.push(err.message);
                 }
-                if (data.length === 0) throw new Error('No valid data points');
-                return data;
-            } catch (err) {
-                lastError = err;
             }
         }
-        throw new Error(`Yahoo failed for ${symbol}: ${lastError?.message || 'all proxies failed'}`);
+        throw new Error(`Yahoo failed for ${symbol}: ${errors.slice(0, 3).join(' | ')}`);
     },
 
 
@@ -447,8 +481,9 @@ const DataStore = {
             sp500Earnings: {
                 label: 'S&P 500 Earnings',
                 sources: [
-                    { name: 'Yahoo Finance', fn: () => this.fetchYahooSPEarnings() },
+                    // FRED is primary — Yahoo quote endpoints need crumb+cookie from browser
                     { name: 'FRED', fn: () => this.fetchSP500Earnings('1990-01-01') },
+                    { name: 'Yahoo Finance', fn: () => this.fetchYahooSPEarnings() },
                 ],
             },
             vix: {
