@@ -360,6 +360,7 @@ const DataStore = {
 
             const dateStr = cols[0]; // YYYY-MM format or YYYY-MM-DD
             const sp500 = parseFloat(cols[1]);
+            const dividend = parseFloat(cols[2]);
             const earnings = parseFloat(cols[3]);
             const cpi = parseFloat(cols[4]);
             const pe10 = parseFloat(cols[9]);
@@ -372,6 +373,7 @@ const DataStore = {
             data.push({
                 date,
                 sp500: isNaN(sp500) ? null : sp500,
+                dividend: isNaN(dividend) ? null : dividend,
                 earnings,
                 cape: isNaN(pe10) ? null : pe10,
                 cpi: isNaN(cpi) ? null : cpi,
@@ -402,9 +404,11 @@ const DataStore = {
                 date = `${yr}-${String(mo).padStart(2, '0')}-01`;
             } else continue;
 
+            const dividend = parseFloat(row.dividend);
             data.push({
                 date,
                 sp500: parseFloat(row.comp) || parseFloat(row.sp500) || null,
+                dividend: isNaN(dividend) ? null : dividend,
                 earnings,
                 cape: parseFloat(row.cape) || null,
                 cpi: parseFloat(row.cpi) || null,
@@ -442,6 +446,7 @@ const DataStore = {
             const mo = Math.min(12, Math.max(1, moRaw));
             const date = `${yr}-${String(mo).padStart(2, '0')}-01`;
             const sp500 = parseFloat(row[1]);
+            const dividend = parseFloat(row[2]);
             const earnings = parseFloat(row[3]);
             const cpi = parseFloat(row[4]);
             const pe10 = parseFloat(row[10]);
@@ -451,6 +456,7 @@ const DataStore = {
             data.push({
                 date,
                 sp500: isNaN(sp500) ? null : sp500,
+                dividend: isNaN(dividend) ? null : dividend,
                 earnings,
                 cape: isNaN(pe10) ? null : pe10,
                 cpi: isNaN(cpi) ? null : cpi,
@@ -905,69 +911,104 @@ const DataStore = {
         this.processed.trailingPE = [];
     },
 
-    // P/IE (Inflation-adjusted Earnings) — OSAM "Earnings Mirage" methodology
-    // Adjusts reported earnings for inflation distortion (FIFO inventory profits + historical-cost depreciation)
-    // Adjusted E = Reported E × (1 - k × YoY_inflation), where k ≈ 1.5
-    // Reference: O'Shaughnessy Asset Management, "The Earnings Mirage"
+    // P/IE (Price to Integrated Equity) — OSAM "Earnings Mirage" methodology
+    // Integrated Equity = cumulative sum of inflation-adjusted retained earnings
+    // For each month: retained = earnings - dividends, adjusted to current CPI
+    // P/IE = Price / Integrated Equity (per share)
+    // Reference: Jesse Livermore / O'Shaughnessy Asset Management, "The Earnings Mirage" (2019)
     computePIE() {
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
-        if (sp500Data.length === 0) {
+        if (shiller.length === 0 || sp500Data.length === 0) {
             this.processed.pie = [];
             return;
         }
 
-        const K = 1.5; // inflation sensitivity coefficient (calibrated to NIPA IVA+CCAdj)
-        const pie = [];
-        const earningsModel = this.buildMonthlyEarningsLookup();
-        const monthlySP = this.getMonthlyValues(sp500Data);
-
-        // Build CPI lookup from Shiller data for YoY inflation
+        // Build CPI lookup: Shiller historical + FRED for recent months
         const cpiByMonth = {};
         shiller.forEach(d => {
-            if (d.cpi && d.cpi > 0) {
-                cpiByMonth[d.date.substring(0, 7)] = d.cpi;
+            if (d.cpi && d.cpi > 0) cpiByMonth[d.date.substring(0, 7)] = d.cpi;
+        });
+        (this.raw.cpi || []).forEach(d => {
+            if (d.value && d.value > 0) cpiByMonth[d.date.substring(0, 7)] = d.value;
+        });
+
+        // Build monthly earnings and dividends from Shiller data
+        // Shiller earnings/dividends are trailing 12-month per-share values
+        const earningsModel = this.buildMonthlyEarningsLookup();
+        const dividendByMonth = {};
+        shiller.forEach(d => {
+            if (d.dividend != null && d.dividend >= 0) {
+                dividendByMonth[d.date.substring(0, 7)] = d.dividend;
             }
         });
 
-        // Also use FRED CPI if available (more recent)
-        const fredCPI = this.raw.cpi || [];
-        fredCPI.forEach(d => {
-            cpiByMonth[d.date.substring(0, 7)] = d.value;
-        });
+        // For months beyond Shiller, estimate dividends from last known payout ratio
+        const shillerSorted = [...shiller].filter(d => d.earnings > 0 && d.dividend != null)
+            .sort((a, b) => a.date.localeCompare(b.date));
+        let lastPayoutRatio = 0.4; // sensible default
+        if (shillerSorted.length >= 12) {
+            const recent = shillerSorted.slice(-12);
+            const avgE = recent.reduce((s, d) => s + d.earnings, 0) / recent.length;
+            const avgD = recent.reduce((s, d) => s + d.dividend, 0) / recent.length;
+            if (avgE > 0) lastPayoutRatio = Math.min(1, Math.max(0, avgD / avgE));
+        }
 
-        const yoyByMonth = {};
-        for (const [monthKey, cpiNow] of Object.entries(cpiByMonth)) {
-            const dt = new Date(`${monthKey}-01T00:00:00Z`);
-            dt.setUTCMonth(dt.getUTCMonth() - 12);
-            const prevKey = dt.toISOString().substring(0, 7);
-            const cpiPrev = cpiByMonth[prevKey];
-            if (cpiNow && cpiPrev && cpiPrev > 0) {
-                yoyByMonth[monthKey] = (cpiNow - cpiPrev) / cpiPrev;
+        // Get monthly S&P prices for the output timeline
+        const monthlySP = this.getMonthlyValues(sp500Data);
+
+        // Sort all months we have earnings for
+        const allMonths = Object.keys(earningsModel.lookup).sort();
+        if (allMonths.length === 0) {
+            this.processed.pie = [];
+            return;
+        }
+
+        // Get latest CPI for adjusting all retained earnings to current dollars
+        const cpiSorted = Object.entries(cpiByMonth).sort((a, b) => a[0].localeCompare(b[0]));
+        const latestCPI = cpiSorted.length > 0 ? cpiSorted[cpiSorted.length - 1][1] : null;
+        if (!latestCPI) {
+            this.processed.pie = [];
+            return;
+        }
+
+        // Compute integrated equity: cumulative sum of inflation-adjusted monthly retained earnings
+        // Earnings/dividends in Shiller are annualized trailing 12-month values,
+        // so monthly retained = (earnings - dividends) / 12
+        const integratedEquityByMonth = {};
+        let cumulativeIE = 0;
+
+        for (const month of allMonths) {
+            const e = earningsModel.lookup[month];
+            if (!e || e <= 0) continue;
+
+            const d = dividendByMonth[month] ?? (e * lastPayoutRatio);
+            const retained = Math.max(0, e - d) / 12; // monthly portion of annual retained earnings
+            const cpiThen = cpiByMonth[month];
+            if (!cpiThen || cpiThen <= 0) continue;
+
+            // Adjust retained earnings to current dollars
+            const realRetained = retained * (latestCPI / cpiThen);
+            cumulativeIE += realRetained;
+
+            if (cumulativeIE > 0) {
+                integratedEquityByMonth[month] = cumulativeIE;
             }
         }
 
-        const processedCPI = this.processed.cpi || [];
-        processedCPI.forEach(d => {
-            if (d.inflationRate !== null) yoyByMonth[d.date.substring(0, 7)] = d.inflationRate / 100;
-        });
-
-        const latestInflation = Object.values(yoyByMonth).slice(-1)[0] || 0;
+        // Build P/IE series
+        const pie = [];
         const shillerMonths = new Set(shiller.map(d => d.date.substring(0, 7)));
         const confirmedCutoff = [...shillerMonths].sort().slice(-1)[0] || null;
 
         for (const sp of monthlySP) {
             const monthKey = sp.date.substring(0, 7);
-            const e = earningsModel.lookup[monthKey];
-            const yoyInflation = yoyByMonth[monthKey] ?? latestInflation;
-            if (!e || e <= 0 || !isFinite(yoyInflation)) continue;
-
-            const adjEarnings = e * (1 - K * yoyInflation);
-            if (adjEarnings <= 0) continue;
+            const ie = integratedEquityByMonth[monthKey];
+            if (!ie || ie <= 0 || !sp.value || sp.value <= 0) continue;
 
             pie.push({
                 date: sp.date,
-                value: parseFloat((sp.value / adjEarnings).toFixed(2)),
+                value: parseFloat((sp.value / ie).toFixed(2)),
                 nowcast: !confirmedCutoff || monthKey > confirmedCutoff,
             });
         }

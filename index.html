@@ -63,11 +63,11 @@
                 </div>
             </section>
 
-            <!-- P/IE (Inflation-Adjusted P/E) -->
+            <!-- P/IE (Price to Integrated Equity) -->
             <section class="chart-section">
                 <div class="chart-header">
-                    <h2>3. P/IE Ratio (Inflation-Adjusted Earnings)</h2>
-                    <p class="chart-description">Price divided by inflation-adjusted earnings (OSAM methodology). Corrects reported earnings for FIFO inventory profits and historical-cost depreciation distortion during inflationary periods.</p>
+                    <h2>3. P/IE Ratio (Price to Integrated Equity)</h2>
+                    <p class="chart-description">Price divided by Integrated Equity — inflation-adjusted cumulative retained earnings (OSAM methodology). Corrects book value for historical-cost depreciation distortion during inflationary periods.</p>
                     <div class="source-link">Source: <a href="https://osam.com/Commentary/the-earnings-mirage" target="_blank">OSAM "The Earnings Mirage"</a> | Shiller/Yale data</div>
                 </div>
                 <div class="chart-container">
@@ -165,7 +165,7 @@
                             </div>
                             <div class="rule">
                                 <span class="rule-name">5. Valuation (P/IE) <span class="nowcast-badge">~2mo lag</span></span>
-                                <span class="rule-desc">P/IE below 22 → +1, 22-32 → 0, above 32 → -1</span>
+                                <span class="rule-desc">P/IE below 0.45 → +1, 0.45-0.70 → 0, above 0.70 → -1</span>
                             </div>
                             <div class="rule">
                                 <span class="rule-name">6. Investor Allocation <span class="nowcast-badge">3mo lag, nowcast via S&P</span></span>
@@ -243,7 +243,7 @@
                         <option value="all">All Series</option>
                         <option value="sp500">S&P 500</option>
                         <option value="cape">Shiller CAPE</option>
-                        <option value="pie">P/IE (Inflation-Adjusted)</option>
+                        <option value="pie">P/IE (Integrated Equity)</option>
                         <option value="unemployment">Unemployment Rate</option>
                         <option value="cpi">CPI / Inflation</option>
                         <option value="vix">VIX</option>
@@ -284,11 +284,11 @@
                 </div>
 
                 <div class="about-card">
-                    <h3>3. P/IE Ratio (Inflation-Adjusted Earnings)</h3>
-                    <p>Based on O'Shaughnessy Asset Management's <a href="https://osam.com/Commentary/the-earnings-mirage" target="_blank">"The Earnings Mirage"</a> research. During inflationary periods, reported earnings are overstated because companies use FIFO inventory accounting (selling old cheap inventory at inflated prices) and historical-cost depreciation (understating real replacement costs). P/IE corrects for this.</p>
-                    <p><strong>Formula:</strong> P/IE = Price / Adjusted Earnings, where Adjusted E = Reported E × (1 - k × YoY_inflation)</p>
-                    <p><strong>k ≈ 1.5</strong> is calibrated to match NIPA (National Income and Product Accounts) IVA (Inventory Valuation Adjustment) + CCAdj (Capital Consumption Adjustment) data. When inflation is 3%, about 4.5% of reported earnings are phantom profits from inventory and depreciation distortions.</p>
-                    <p><strong>Interpretation:</strong> P/IE > standard P/E during high inflation (earnings are lower after adjustment), P/IE ≈ standard P/E during low inflation. This gives a truer picture of whether the market is expensive relative to real economic earnings.</p>
+                    <h3>3. P/IE Ratio (Price to Integrated Equity)</h3>
+                    <p>Based on O'Shaughnessy Asset Management's <a href="https://osam.com/Commentary/the-earnings-mirage" target="_blank">"The Earnings Mirage"</a> research. Integrated Equity deconstructs book value into individual years of retained earnings, adjusts each for inflation using CPI, then sums them to produce a properly inflation-adjusted book value.</p>
+                    <p><strong>Formula:</strong> P/IE = Price / Integrated Equity, where IE = Σ (retained_earnings_t × CPI_now / CPI_t) for all months t. Retained earnings = reported earnings − dividends.</p>
+                    <p><strong>Key insight:</strong> GAAP book value understates true equity because depreciation is based on historical cost. This causes ROE to appear artificially high (~12%) when the real return on integrated equity (ROIE) averages ~4%. P/IE corrects this distortion.</p>
+                    <p><strong>Interpretation:</strong> Historical average P/IE ≈ 0.5–0.6 (vs. ~2.0 for P/B). Values well above the historical average suggest overvaluation after accounting for inflation's distortion of book value.</p>
                 </div>
 
                 <div class="about-card">

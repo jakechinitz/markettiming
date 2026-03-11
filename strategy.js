@@ -175,7 +175,7 @@ const Strategy = {
         const pie = DataStore.getLatest('pie');
         if (pie) {
             signals.pie = this.classifyValuation(pie.value, CONFIG.STRATEGY.PIE_LOW, CONFIG.STRATEGY.PIE_HIGH);
-            signals.pieDetail = `P/IE at ${pie.value.toFixed(1)}`;
+            signals.pieDetail = `P/IE at ${pie.value.toFixed(2)}`;
         }
 
         // 6. Investor allocation (uses nowcast)
