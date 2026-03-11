@@ -19,16 +19,6 @@ const DataStore = {
         'https://raw.githubusercontent.com/jamesplease/stock-market-data/master/data.json',
     ],
     SHILLER_XLS_URL: 'http://www.econ.yale.edu/~shiller/data/ie_data.xls',
-    CAPE_SOURCES: [
-        'https://www.multpl.com/shiller-pe/table/by-month',
-        'https://en.macromicro.me/series/1632/us-shiller-cape',
-    ],
-    EARNINGS_SOURCES: [
-        'https://www.multpl.com/s-p-500-earnings/table/by-month',
-    ],
-    PE_RATIO_SOURCES: [
-        'https://www.multpl.com/s-p-500-pe-ratio/table/by-month',
-    ],
 
     // ─── Low-level fetchers ──────────────────────────────────────────
 
@@ -192,49 +182,6 @@ const DataStore = {
         throw new Error(`No usable S&P earnings series: ${errors.slice(0, 3).join(' | ')}`);
     },
 
-    async fetchDirectSPEarnings() {
-        const errors = [];
-        for (const src of this.EARNINGS_SOURCES) {
-            const urls = [src, ...this.CORS_PROXIES.map(make => make(src))];
-            for (const url of urls) {
-                try {
-                    const resp = await this._fetch(url, 20000);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const html = await resp.text();
-                    const data = this._parseSPEarningsHtml(html);
-                    if (data.length >= 24) {
-                        console.log(`[Earnings] Loaded ${data.length} rows from ${src}`);
-                        return data;
-                    }
-                    throw new Error(`only ${data.length} rows`);
-                } catch (err) {
-                    errors.push(`${src}: ${err.message}`);
-                }
-            }
-        }
-        throw new Error(`Direct earnings failed: ${errors.slice(0, 3).join(' | ')}`);
-    },
-
-    _parseSPEarningsHtml(html) {
-        const rows = [];
-        const rowRegex = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
-        let m;
-        while ((m = rowRegex.exec(html)) !== null) {
-            const dateRaw = String(m[1]).replace(/&nbsp;/g, ' ').trim();
-            const valueRaw = String(m[2]).replace(/[$,%]/g, '').replace(/,/g, '').trim();
-            const val = parseFloat(valueRaw);
-            if (!isFinite(val) || val <= 0) continue;
-
-            const d = new Date(dateRaw);
-            if (isNaN(d.getTime())) continue;
-            const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().substring(0, 10);
-            rows.push({ date, value: val });
-        }
-
-        const byMonth = {};
-        rows.forEach(r => { byMonth[r.date.substring(0, 7)] = r; });
-        return Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date));
-    },
 
     // ─── Yahoo Finance S&P 500 earnings (derived from trailing PE) ───
     async fetchYahooSPEarnings() {
@@ -293,30 +240,6 @@ const DataStore = {
         throw new Error(`Yahoo earnings failed: ${errors.slice(0, 3).join(' | ')}`);
     },
 
-    // ─── Derive earnings from Multpl trailing PE + S&P price ──────
-    async fetchDerivedEarningsFromPE() {
-        const errors = [];
-        for (const src of this.PE_RATIO_SOURCES) {
-            const urls = [src, ...this.CORS_PROXIES.map(make => make(src))];
-            for (const url of urls) {
-                try {
-                    const resp = await this._fetch(url, 20000);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const html = await resp.text();
-                    // Same HTML table format as earnings page
-                    const peData = this._parseSPEarningsHtml(html);
-                    if (peData.length < 24) throw new Error(`only ${peData.length} PE rows`);
-                    console.log(`[PE-Derived] Loaded ${peData.length} PE ratio rows from ${src}`);
-                    // Return PE ratios — will be converted to earnings in buildMonthlyEarningsLookup
-                    return peData;
-                } catch (err) {
-                    errors.push(`${src}: ${err.message}`);
-                }
-            }
-        }
-        throw new Error(`PE ratio fetch failed: ${errors.slice(0, 3).join(' | ')}`);
-    },
-
     // ─── Yahoo Finance fetcher ───────────────────────────────────────
     async fetchYahoo(symbol, startDate) {
         const period1 = Math.floor(new Date(startDate).getTime() / 1000);
@@ -356,54 +279,6 @@ const DataStore = {
         throw new Error(`Yahoo failed for ${symbol}: ${lastError?.message || 'all proxies failed'}`);
     },
 
-
-    // ─── Direct CAPE data fetcher (free web sources) ────────────────
-    async fetchDirectCAPE() {
-        const errors = [];
-        for (const src of this.CAPE_SOURCES) {
-            // try direct then proxied
-            const urls = [src, ...this.CORS_PROXIES.map(make => make(src))];
-            for (const url of urls) {
-                try {
-                    const resp = await this._fetch(url, 20000);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const html = await resp.text();
-                    const data = this._parseCAPEHtml(html);
-                    if (data.length >= 24) {
-                        console.log(`[CAPE] Loaded ${data.length} rows from ${src}`);
-                        return data;
-                    }
-                    throw new Error(`only ${data.length} rows`);
-                } catch (err) {
-                    errors.push(`${src}: ${err.message}`);
-                }
-            }
-        }
-        throw new Error(`Direct CAPE failed: ${errors.slice(0, 3).join(' | ')}`);
-    },
-
-    _parseCAPEHtml(html) {
-        // Works for Multpl-like table rows: <td>Jan 2026</td><td>37.21</td>
-        const rows = [];
-        const rowRegex = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
-        let m;
-        while ((m = rowRegex.exec(html)) !== null) {
-            const dateRaw = String(m[1]).replace(/&nbsp;/g, ' ').trim();
-            const valueRaw = String(m[2]).replace(/,/g, '').trim();
-            const val = parseFloat(valueRaw);
-            if (!isFinite(val) || val <= 0) continue;
-
-            const d = new Date(dateRaw + ' 01');
-            if (isNaN(d.getTime())) continue;
-            const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1)).toISOString().substring(0, 10);
-            rows.push({ date, value: val, nowcast: false });
-        }
-
-        // de-dup by month, sort ascending
-        const byMonth = {};
-        rows.forEach(r => { byMonth[r.date.substring(0, 7)] = r; });
-        return Object.values(byMonth).sort((a, b) => a.date.localeCompare(b.date));
-    },
 
     // ─── Shiller data fetcher (3-tier fallback) ─────────────────────
     // Returns [{date, sp500, earnings, cape, cpi}, ...]
@@ -614,15 +489,8 @@ const DataStore = {
             sp500Earnings: {
                 label: 'S&P 500 Earnings',
                 sources: [
-                    { name: 'Multpl', fn: () => this.fetchDirectSPEarnings() },
                     { name: 'Yahoo Finance', fn: () => this.fetchYahooSPEarnings() },
                     { name: 'FRED', fn: () => this.fetchSP500Earnings('1990-01-01') },
-                ],
-            },
-            sp500PERatio: {
-                label: 'S&P 500 Trailing PE',
-                sources: [
-                    { name: 'Multpl PE', fn: () => this.fetchDerivedEarningsFromPE() },
                 ],
             },
             vix: {
@@ -660,12 +528,6 @@ const DataStore = {
                 label: 'Yield Curve',
                 sources: [
                     { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y, '1990-01-01') },
-                ],
-            },
-            capeDirect: {
-                label: 'CAPE (direct source)',
-                sources: [
-                    { name: 'Multpl/MacroMicro', fn: () => this.fetchDirectCAPE() },
                 ],
             },
             shiller: {
@@ -982,27 +844,6 @@ const DataStore = {
             });
         }
 
-        // Layer 2: Fill in / extend with directly-fetched CAPE values (Multpl/MacroMicro)
-        // These are pre-computed Shiller CAPE values that may be more up-to-date than our calculation
-        const directCape = this.raw.capeDirect || [];
-        if (directCape.length > 0) {
-            const capeByMonth = {};
-            cape.forEach(d => { capeByMonth[d.date.substring(0, 7)] = true; });
-
-            for (const d of directCape) {
-                const mk = d.date.substring(0, 7);
-                if (!capeByMonth[mk] && d.value > 0) {
-                    cape.push({
-                        date: d.date,
-                        value: d.value,
-                        nowcast: !lastConfirmedMonth || mk > lastConfirmedMonth,
-                    });
-                    capeByMonth[mk] = true;
-                }
-            }
-            cape.sort((a, b) => a.date.localeCompare(b.date));
-        }
-
         this.processed.cape = cape;
     },
 
@@ -1146,7 +987,7 @@ const DataStore = {
     },
 
     // Build a monthly earnings lookup that blends Shiller history with fresher data sources.
-    // Priority: Shiller (historical) → FRED/Multpl earnings → PE-derived earnings → Yahoo spot → projection
+    // Priority: Shiller (historical) → FRED/Yahoo earnings → growth-rate projection
     // Returns {lookup, hasFreshFeed} where lookup[YYYY-MM] = earnings estimate for that month.
     buildMonthlyEarningsLookup() {
         const shiller = this.raw.shiller || [];
@@ -1159,7 +1000,7 @@ const DataStore = {
             if (d.earnings && d.earnings > 0) lookup[d.date.substring(0, 7)] = d.earnings;
         });
 
-        // Layer 2: Blend in FRED/Multpl direct earnings (fills gaps & extends forward)
+        // Layer 2: Blend in FRED/Yahoo direct earnings (fills gaps & extends forward)
         if (fred.length >= 4) {
             const fredByMonth = {};
             fred.forEach(d => {
@@ -1195,66 +1036,7 @@ const DataStore = {
             hasFreshFeed = true;
         }
 
-        // Layer 3: Derive earnings from Multpl trailing PE ratios + S&P prices
-        // If we have PE ratio data, earnings = price / PE for each month
-        const peData = this.raw.sp500PERatio || [];
-        const sp500Data = this.raw.sp500 || [];
-        if (peData.length > 0 && sp500Data.length > 0) {
-            const monthlySP = {};
-            sp500Data.forEach(d => { monthlySP[d.date.substring(0, 7)] = d.value; });
-
-            const peByMonth = {};
-            peData.forEach(d => { peByMonth[d.date.substring(0, 7)] = d.value; });
-
-            // Compute scale factor where we have overlap with existing lookup
-            const peScaleSamples = [];
-            for (const [month, pe] of Object.entries(peByMonth)) {
-                const price = monthlySP[month];
-                if (lookup[month] && pe > 0 && price > 0) {
-                    const derivedE = price / pe;
-                    peScaleSamples.push(lookup[month] / derivedE);
-                }
-            }
-            const peScale = this._median(peScaleSamples) || 1;
-
-            // Fill gaps using PE-derived earnings (scaled to match Shiller basis)
-            for (const [month, pe] of Object.entries(peByMonth)) {
-                if (lookup[month]) continue; // don't overwrite existing data
-                const price = monthlySP[month];
-                if (pe > 0 && price > 0) {
-                    const derived = (price / pe) * peScale;
-                    if (derived > 0) {
-                        lookup[month] = derived;
-                        hasFreshFeed = true;
-                    }
-                }
-            }
-
-            // Also extend the last PE-derived value to fill remaining gaps
-            const peMonths = Object.keys(peByMonth).sort();
-            const lastPEMonth = peMonths[peMonths.length - 1];
-            const lastPE = peByMonth[lastPEMonth];
-            if (lastPE > 0) {
-                const latestSPDate = sp500Data[sp500Data.length - 1]?.date;
-                if (latestSPDate) {
-                    const end = new Date(latestSPDate);
-                    let cursor = new Date(`${lastPEMonth}-01T00:00:00Z`);
-                    while (cursor <= end) {
-                        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-                        const mk = cursor.toISOString().substring(0, 7);
-                        if (lookup[mk]) continue;
-                        const price = monthlySP[mk];
-                        if (price > 0) {
-                            // Use last known PE to derive earnings for recent months
-                            const derived = (price / lastPE) * peScale;
-                            if (derived > 0) lookup[mk] = derived;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Layer 4: Project forward from last known earnings (growth-rate extrapolation)
+        // Layer 3: Project forward from last known earnings (growth-rate extrapolation)
         const projectForward = () => {
             const monthKeys = Object.keys(lookup).sort();
             if (monthKeys.length === 0) return;
