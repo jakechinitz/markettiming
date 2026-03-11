@@ -211,7 +211,7 @@ function renderDataTable(series) {
                 ['Equity Allocation', DataStore.getLatest('equityAlloc')],
                 ['Yield Curve (10Y-2Y)', DataStore.getLatest('yieldCurve')],
                 ['Shiller CAPE', DataStore.getLatest('cape')],
-                ['P/IE (Inflation-Adj)', DataStore.getLatest('pie')],
+                ['P/IE (Integrated Equity)', DataStore.getLatest('pie')],
             ];
             rows = summaries
                 .filter(s => s[1])

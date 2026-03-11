@@ -267,7 +267,7 @@ const Charts = {
 
         const { confirmed, nowcast, hasNowcast } = this.splitNowcast(data);
         const datasets = [{
-            label: 'P/IE (Inflation-Adjusted)',
+            label: 'P/IE (Integrated Equity)',
             data: confirmed,
             borderColor: CONFIG.COLORS.orange,
             backgroundColor: 'rgba(251, 146, 60, 0.1)',
