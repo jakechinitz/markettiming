@@ -13,11 +13,8 @@ const DataStore = {
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     ],
 
-    // Shiller data sources — tried in order (GitHub-hosted CSV/JSON are CORS-friendly)
-    SHILLER_SOURCES: [
-        'https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv',
-        'https://raw.githubusercontent.com/jamesplease/stock-market-data/master/data.json',
-    ],
+    // Shiller data source (GitHub-hosted CSV, CORS-friendly, updated monthly)
+    SHILLER_CSV_URL: 'https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv',
     SHILLER_XLS_URL: 'http://www.econ.yale.edu/~shiller/data/ie_data.xls',
 
     // ─── Low-level fetchers ──────────────────────────────────────────
@@ -226,6 +223,14 @@ const DataStore = {
                     const eps = parseFloat((price / trailingPE).toFixed(2));
                     if (!isFinite(eps) || eps <= 0) throw new Error(`Invalid derived EPS: ${eps}`);
 
+                    // Also capture dividend rate for P/IE calculation
+                    const divRate = v6?.trailingAnnualDividendRate
+                        || json?.quoteSummary?.result?.[0]?.defaultKeyStatistics?.trailingAnnualDividendRate?.raw;
+                    if (divRate && divRate > 0) {
+                        this._yahooDividendRate = divRate;
+                        console.log(`[Yahoo] Trailing annual dividend rate: ${divRate}`);
+                    }
+
                     const now = new Date();
                     const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
                         .toISOString().substring(0, 10);
@@ -280,18 +285,17 @@ const DataStore = {
     },
 
 
-    // ─── Shiller data fetcher (3-tier fallback) ─────────────────────
-    // Returns [{date, sp500, earnings, cape, cpi}, ...]
+    // ─── Shiller data fetcher (2-tier fallback) ─────────────────────
+    // Returns [{date, sp500, dividend, earnings, cape, cpi}, ...]
     // Source 1: GitHub CSV (datasets/s-and-p-500) — CORS-friendly, data from 1871
-    // Source 2: GitHub JSON (jamesplease/stock-market-data) — CORS-friendly, 1871-2023
-    // Source 3: Yale XLS via CORS proxy — original source, binary format (needs SheetJS)
+    // Source 2: Yale XLS via CORS proxy — original source, binary format (needs SheetJS)
     async fetchShillerData() {
         const errors = [];
 
-        // Source 1: GitHub CSV
+        // Source 1: GitHub CSV (updated monthly, CORS-friendly)
         try {
             console.log('[Shiller] Trying GitHub CSV...');
-            const resp = await this._fetch(this.SHILLER_SOURCES[0], 20000);
+            const resp = await this._fetch(this.SHILLER_CSV_URL, 20000);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const csv = await resp.text();
             const data = this._parseShillerCSV(csv);
@@ -305,24 +309,7 @@ const DataStore = {
             console.warn('[Shiller] GitHub CSV failed:', err.message);
         }
 
-        // Source 2: GitHub JSON
-        try {
-            console.log('[Shiller] Trying GitHub JSON...');
-            const resp = await this._fetch(this.SHILLER_SOURCES[1], 20000);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const json = await resp.json();
-            const data = this._parseShillerJSON(json);
-            if (data.length >= 100) {
-                console.log(`[Shiller] GitHub JSON: ${data.length} months`);
-                return data;
-            }
-            throw new Error(`Only ${data.length} rows`);
-        } catch (err) {
-            errors.push(`JSON: ${err.message}`);
-            console.warn('[Shiller] GitHub JSON failed:', err.message);
-        }
-
-        // Source 3: Yale XLS via CORS proxy (needs SheetJS/xlsx library)
+        // Source 2: Yale XLS via CORS proxy (needs SheetJS/xlsx library)
         if (typeof XLSX !== 'undefined') {
             for (const makeProxy of this.CORS_PROXIES) {
                 try {
@@ -365,7 +352,7 @@ const DataStore = {
             const cpi = parseFloat(cols[4]);
             const pe10 = parseFloat(cols[9]);
 
-            if (!dateStr || isNaN(earnings) || earnings <= 0) continue;
+            if (!dateStr || (isNaN(sp500) && isNaN(earnings))) continue;
 
             // Normalize date to YYYY-MM-01
             const date = dateStr.length <= 7 ? dateStr + '-01' : dateStr.substring(0, 10);
@@ -373,45 +360,10 @@ const DataStore = {
             data.push({
                 date,
                 sp500: isNaN(sp500) ? null : sp500,
-                dividend: isNaN(dividend) ? null : dividend,
-                earnings,
-                cape: isNaN(pe10) ? null : pe10,
-                cpi: isNaN(cpi) ? null : cpi,
-            });
-        }
-        return data;
-    },
-
-    // Parse GitHub JSON (jamesplease/stock-market-data format)
-    // Fields: {date (decimal year), comp, dividend, earnings, cpi, cape, year, month}
-    _parseShillerJSON(json) {
-        const arr = Array.isArray(json) ? json : (json.data || []);
-        const data = [];
-
-        for (const row of arr) {
-            const earnings = parseFloat(row.earnings);
-            if (isNaN(earnings) || earnings <= 0) continue;
-
-            // Convert decimal date (e.g. 2023.5) or {year, month} to YYYY-MM-01
-            let date;
-            if (row.year && row.month) {
-                date = `${row.year}-${String(row.month).padStart(2, '0')}-01`;
-            } else if (row.date) {
-                const dec = parseFloat(row.date);
-                const yr = Math.floor(dec);
-                const frac = Math.max(0, Math.min(0.999999, dec - yr));
-                const mo = Math.min(12, Math.max(1, Math.floor(frac * 12) + 1));
-                date = `${yr}-${String(mo).padStart(2, '0')}-01`;
-            } else continue;
-
-            const dividend = parseFloat(row.dividend);
-            data.push({
-                date,
-                sp500: parseFloat(row.comp) || parseFloat(row.sp500) || null,
-                dividend: isNaN(dividend) ? null : dividend,
-                earnings,
-                cape: parseFloat(row.cape) || null,
-                cpi: parseFloat(row.cpi) || null,
+                dividend: (isNaN(dividend) || dividend <= 0) ? null : dividend,
+                earnings: (isNaN(earnings) || earnings <= 0) ? null : earnings,
+                cape: (isNaN(pe10) || pe10 <= 0) ? null : pe10,
+                cpi: (isNaN(cpi) || cpi <= 0) ? null : cpi,
             });
         }
         return data;
@@ -943,7 +895,8 @@ const DataStore = {
             }
         });
 
-        // For months beyond Shiller, estimate dividends from last known payout ratio
+        // For months beyond Shiller, use Yahoo dividend rate if available, else estimate from payout ratio
+        const yahooDivRate = this._yahooDividendRate || null; // trailing annual dividend per share
         const shillerSorted = [...shiller].filter(d => d.earnings > 0 && d.dividend != null)
             .sort((a, b) => a.date.localeCompare(b.date));
         let lastPayoutRatio = 0.4; // sensible default
@@ -982,7 +935,8 @@ const DataStore = {
             const e = earningsModel.lookup[month];
             if (!e || e <= 0) continue;
 
-            const d = dividendByMonth[month] ?? (e * lastPayoutRatio);
+            // Use Shiller dividend if available, else Yahoo annual rate, else payout ratio estimate
+            const d = dividendByMonth[month] ?? yahooDivRate ?? (e * lastPayoutRatio);
             const retained = Math.max(0, e - d) / 12; // monthly portion of annual retained earnings
             const cpiThen = cpiByMonth[month];
             if (!cpiThen || cpiThen <= 0) continue;
