@@ -519,7 +519,10 @@ const Strategy = {
 
         const stratFinal = strategyLine[strategyLine.length - 1].value;
         const bhFinal = buyHoldLine[buyHoldLine.length - 1].value;
-        const years = strategyLine.length / 12;
+
+        const startDate = new Date(strategyLine[0].date);
+        const endDate = new Date(strategyLine[strategyLine.length - 1].date);
+        const years = Math.max((endDate - startDate) / (365.25 * 24 * 60 * 60 * 1000), 1 / 12);
 
         const stratCAGR = (Math.pow(stratFinal / 10000, 1 / years) - 1) * 100;
         const bhCAGR = (Math.pow(bhFinal / 10000, 1 / years) - 1) * 100;
