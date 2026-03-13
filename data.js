@@ -47,10 +47,10 @@ const DataStore = {
     _fredUrl(seriesId, apiKey, startDate) {
         const params = new URLSearchParams({
             series_id: seriesId,
-            api_key: apiKey,
             file_type: 'json',
             sort_order: 'asc',
         });
+        if (apiKey) params.set('api_key', apiKey);
         if (startDate) params.set('observation_start', startDate);
         return `${CONFIG.FRED_BASE_URL}?${params}`;
     },
@@ -94,24 +94,30 @@ const DataStore = {
     // ─── FRED fetcher (tries all keys, then proxied) ─────────────────
     async fetchFred(seriesId, startDate) {
         const keys = this._getFredKeys();
+        const keyAttempts = keys.length > 0 ? keys : [null];
         const errors = [];
 
         // Strategy 1: Direct fetch with each API key
-        for (const key of keys) {
+        for (const key of keyAttempts) {
             try {
                 const url = this._fredUrl(seriesId, key, startDate);
-                console.log(`[FRED] Trying direct ${seriesId} with key ...${key.slice(-4)}`);
+                console.log(
+                    key
+                        ? `[FRED] Trying direct ${seriesId} with key ...${key.slice(-4)}`
+                        : `[FRED] Trying direct ${seriesId} without API key`
+                );
                 const resp = await this._fetch(url);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const json = await resp.json();
                 return this._parseFredResponse(json, seriesId);
             } catch (err) {
-                errors.push(`direct(${key.slice(-4)}): ${err.message}`);
+                const tag = key ? key.slice(-4) : 'no-key';
+                errors.push(`direct(${tag}): ${err.message}`);
             }
         }
 
         // Strategy 2: Route through CORS proxies (in case direct CORS is blocked)
-        for (const key of keys) {
+        for (const key of keyAttempts) {
             const fredUrl = this._fredUrl(seriesId, key, startDate);
             for (const makeProxy of this.CORS_PROXIES) {
                 try {
@@ -122,7 +128,8 @@ const DataStore = {
                     const json = await resp.json();
                     return this._parseFredResponse(json, seriesId);
                 } catch (err) {
-                    errors.push(`proxy: ${err.message}`);
+                    const tag = key ? key.slice(-4) : 'no-key';
+                    errors.push(`proxy(${tag}): ${err.message}`);
                 }
             }
         }
