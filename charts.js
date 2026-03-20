@@ -85,6 +85,41 @@ const Charts = {
             datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
 
+        // Compute dynamic std-dev bands from confirmed data
+        const stats = DataStore.getSeriesStats('equityAlloc');
+        const annotations = {};
+        if (stats) {
+            const bullishLine = stats.mean + CONFIG.STRATEGY.ALLOC_BULLISH_STDDEV * stats.stddev;
+            const bearishLine = stats.mean + CONFIG.STRATEGY.ALLOC_BEARISH_STDDEV * stats.stddev;
+            annotations.mean = {
+                type: 'line',
+                yMin: stats.mean,
+                yMax: stats.mean,
+                borderColor: CONFIG.COLORS.gray,
+                borderWidth: 1,
+                borderDash: [3, 3],
+                label: { content: `Mean (${stats.mean.toFixed(1)}%)`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            annotations.low = {
+                type: 'line',
+                yMin: bullishLine,
+                yMax: bullishLine,
+                borderColor: CONFIG.COLORS.green,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `Bullish (<${bullishLine.toFixed(0)}%)`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            annotations.high = {
+                type: 'line',
+                yMin: bearishLine,
+                yMax: bearishLine,
+                borderColor: CONFIG.COLORS.red,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `Bearish (>${bearishLine.toFixed(0)}%)`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+        }
+
         this.instances['chart-allocation'] = new Chart(ctx, {
             type: 'line',
             data: {
@@ -95,28 +130,7 @@ const Charts = {
                 ...this.getBaseOptions(),
                 plugins: {
                     ...CONFIG.CHART_DEFAULTS.plugins,
-                    annotation: {
-                        annotations: {
-                            low: {
-                                type: 'line',
-                                yMin: CONFIG.STRATEGY.ALLOC_LOW,
-                                yMax: CONFIG.STRATEGY.ALLOC_LOW,
-                                borderColor: CONFIG.COLORS.green,
-                                borderWidth: 1,
-                                borderDash: [5, 5],
-                                label: { content: 'Bullish (<35%)', display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
-                            },
-                            high: {
-                                type: 'line',
-                                yMin: CONFIG.STRATEGY.ALLOC_HIGH,
-                                yMax: CONFIG.STRATEGY.ALLOC_HIGH,
-                                borderColor: CONFIG.COLORS.red,
-                                borderWidth: 1,
-                                borderDash: [5, 5],
-                                label: { content: 'Bearish (>45%)', display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
-                            },
-                        },
-                    },
+                    annotation: { annotations },
                 },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
