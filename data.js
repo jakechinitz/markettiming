@@ -713,9 +713,12 @@ const DataStore = {
             const monthKey = sp.date.substring(0, 7);
             const ie = integratedEquityByMonth[monthKey];
             if (!ie || ie <= 0 || !sp.value || sp.value <= 0) continue;
+            // IE is in latestCPI dollars — adjust price to the same real basis
+            const cpi = cpiByMonth[monthKey] || latestCPI;
+            const realPrice = sp.value * (latestCPI / cpi);
             pie.push({
                 date: sp.date,
-                value: parseFloat((sp.value / ie).toFixed(2)),
+                value: parseFloat((realPrice / ie).toFixed(4)),
                 nowcast: !confirmedCutoff || monthKey > confirmedCutoff,
             });
         }
