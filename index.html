@@ -8,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
     <header>
@@ -41,7 +40,7 @@
                 <div class="chart-header">
                     <h2>1. Average Investor Equity Allocation vs Future Returns</h2>
                     <p class="chart-description">The single greatest predictor of future stock market returns. Higher equity allocation → lower future 10-year returns.</p>
-                    <div class="source-link">Source: <a href="https://www.philosophicaleconomics.com/2013/12/the-single-greatest-predictor-of-future-stock-market-returns/" target="_blank">Philosophical Economics</a> | Fed Z.1 Flow of Funds</div>
+                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/BOGZ1FL153064486Q" target="_blank" rel="noopener noreferrer">FRED (BOGZ1FL153064486Q)</a> · <a href="https://www.philosophicaleconomics.com/2013/12/the-single-greatest-predictor-of-future-stock-market-returns/" target="_blank">Philosophical Economics</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-allocation"></canvas>
@@ -56,7 +55,7 @@
                 <div class="chart-header">
                     <h2>2. Shiller CAPE Ratio</h2>
                     <p class="chart-description">Cyclically Adjusted Price-to-Earnings ratio. Current price divided by the average of 10 years of inflation-adjusted earnings.</p>
-                    <div class="source-link">Source: <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Shiller/Yale data</a></div>
+                    <div class="source-link">Source: <a href="https://github.com/datasets/s-and-p-500" target="_blank" rel="noopener noreferrer">Shiller/S&P 500 dataset</a> · <a href="https://fred.stlouisfed.org/series/CPIAUCSL" target="_blank" rel="noopener noreferrer">FRED CPI</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-cape"></canvas>
@@ -68,7 +67,7 @@
                 <div class="chart-header">
                     <h2>3. P/IE Ratio (Price to Integrated Equity)</h2>
                     <p class="chart-description">Price divided by Integrated Equity — inflation-adjusted cumulative retained earnings (OSAM methodology). Corrects book value for historical-cost depreciation distortion during inflationary periods.</p>
-                    <div class="source-link">Source: <a href="https://osam.com/Commentary/the-earnings-mirage" target="_blank">OSAM "The Earnings Mirage"</a> | Shiller/Yale data</div>
+                    <div class="source-link">Source: <a href="https://github.com/datasets/s-and-p-500" target="_blank" rel="noopener noreferrer">Shiller/S&P 500 dataset</a> · <a href="https://fred.stlouisfed.org/series/CPIAUCSL" target="_blank" rel="noopener noreferrer">FRED CPI</a> · <a href="https://osam.com/Commentary/the-earnings-mirage" target="_blank">OSAM methodology</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-pie"></canvas>
@@ -80,7 +79,7 @@
                 <div class="chart-header">
                     <h2>4. Unemployment Rate & Moving Average</h2>
                     <p class="chart-description">When unemployment crosses above its 12-month moving average, recessions often follow (Sahm Rule variant).</p>
-                    <div class="source-link">Source: FRED series UNRATE</div>
+                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/UNRATE" target="_blank" rel="noopener noreferrer">FRED (UNRATE)</a> · Nowcast via <a href="https://fred.stlouisfed.org/series/ICSA" target="_blank" rel="noopener noreferrer">FRED (ICSA)</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-unemployment"></canvas>
@@ -92,7 +91,7 @@
                 <div class="chart-header">
                     <h2>5. S&P 500 & 200-Day Moving Average</h2>
                     <p class="chart-description">Classic trend following signal. When price is above the 200-day MA, the market is in an uptrend.</p>
-                    <div class="source-link">Source: <a href="https://finance.yahoo.com/quote/%5EGSPC/history/" target="_blank" rel="noopener noreferrer">Yahoo Finance (^GSPC)</a> | FRED SP500</div>
+                    <div class="source-link">Source: <a href="https://finance.yahoo.com/quote/%5EGSPC/" target="_blank" rel="noopener noreferrer">Yahoo Finance (^GSPC)</a> · Daily data from 1950</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-sp500"></canvas>
@@ -104,7 +103,7 @@
                 <div class="chart-header">
                     <h2>6. CPI — Consumer Price Index & Inflation Rate</h2>
                     <p class="chart-description">Year-over-year inflation rate derived from CPI for All Urban Consumers.</p>
-                    <div class="source-link">Source: FRED series CPIAUCSL</div>
+                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/CPIAUCSL" target="_blank" rel="noopener noreferrer">FRED (CPIAUCSL)</a> · Monthly from 1947</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-cpi"></canvas>
@@ -116,7 +115,7 @@
                 <div class="chart-header">
                     <h2>7. VIX Volatility Index & Trend Following Regimes</h2>
                     <p class="chart-description">The CBOE Volatility Index with regime thresholds. Low vol environments favor trend-following; high vol signals risk-off.</p>
-                    <div class="source-link">Source: <a href="https://finance.yahoo.com/quote/%5EVIX/history/" target="_blank" rel="noopener noreferrer">Yahoo Finance (^VIX)</a> | FRED VIXCLS</div>
+                    <div class="source-link">Source: <a href="https://finance.yahoo.com/quote/%5EVIX/" target="_blank" rel="noopener noreferrer">Yahoo Finance (^VIX)</a> · Daily data from 1990</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-vix"></canvas>
@@ -127,7 +126,7 @@
                 <div class="chart-header">
                     <h2>8. Treasury Yield Curve Spread (10Y - 2Y)</h2>
                     <p class="chart-description">The difference between 10-year and 2-year Treasury yields. An inverted yield curve (spread below 0) has preceded every U.S. recession since 1970.</p>
-                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank" rel="noopener noreferrer">FRED series T10Y2Y</a></div>
+                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank" rel="noopener noreferrer">FRED (T10Y2Y)</a> · Daily from 1976</div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-yieldcurve"></canvas>
@@ -278,9 +277,9 @@
 
                 <div class="about-card">
                     <h3>2. Shiller CAPE Ratio</h3>
-                    <p>Robert Shiller's Cyclically Adjusted Price-to-Earnings ratio smooths earnings over 10 years to remove business cycle effects. It has historically mean-reverted around ~16-17. Data is sourced from <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Shiller's dataset via Yale</a>, with multiple fallback sources.</p>
+                    <p>Robert Shiller's Cyclically Adjusted Price-to-Earnings ratio smooths earnings over 10 years to remove business cycle effects. It has historically mean-reverted around ~16-17. Data is sourced from the <a href="https://github.com/datasets/s-and-p-500" target="_blank">Shiller S&P 500 dataset</a>.</p>
                     <p><strong>Formula:</strong> CAPE = Real S&P 500 Price / (10-year average of Real Trailing 12-Month Earnings)</p>
-                    <p><strong>Note:</strong> Uses actual reported S&P 500 earnings, not estimates. Recent months beyond the dataset are extrapolated using price changes.</p>
+                    <p><strong>Note:</strong> Uses actual reported S&P 500 earnings, not estimates. Recent months beyond the dataset are projected using trailing earnings growth rate.</p>
                 </div>
 
                 <div class="about-card">
@@ -336,15 +335,16 @@
 
                 <div class="about-card">
                     <h3>Data Sources</h3>
-                    <p><strong>Market Data (S&P 500, VIX):</strong> Fetched from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> via CORS proxy for full history (25+ years of daily data). Falls back to FRED if Yahoo is unavailable.</p>
-                    <p><strong>Economic Data (Unemployment, CPI, Yield Curve, Initial Claims, Equity Allocation):</strong> Pulled from the <a href="https://fred.stlouisfed.org/" target="_blank">Federal Reserve Economic Data (FRED)</a> API. All data loads automatically — no API key needed.</p>
+                    <p><strong>Market Data (S&P 500, VIX):</strong> <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> v8 chart API — daily data going back to 1950 (S&P 500) and 1990 (VIX).</p>
+                    <p><strong>Economic Data (Unemployment, CPI, Yield Curve, Initial Claims, Equity Allocation):</strong> <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> CSV endpoint — no API key needed, full history (some series back to 1940s).</p>
+                    <p><strong>Historical Earnings &amp; CAPE:</strong> <a href="https://github.com/datasets/s-and-p-500" target="_blank">Shiller S&amp;P 500 dataset</a> — monthly data from 1871, includes earnings, dividends, CPI, and CAPE.</p>
                 </div>
             </section>
         </div>
     </main>
 
     <footer>
-        <p>Data from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a>, <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> & <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Shiller</a> · Updated automatically · Not financial advice</p>
+        <p>Data from <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a>, <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> & <a href="https://github.com/datasets/s-and-p-500" target="_blank">Shiller</a> · Updated automatically · Not financial advice</p>
     </footer>
 
     <script src="config.js"></script>
