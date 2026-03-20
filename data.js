@@ -683,8 +683,12 @@ const DataStore = {
         }
 
         // Compute integrated equity: cumulative inflation-adjusted retained earnings
+        // Skip the first 50 years (600 months) of accumulation — IE starts near zero
+        // and takes decades to build up, producing misleadingly high early P/IE values.
         const integratedEquityByMonth = {};
         let cumulativeIE = 0;
+        let monthCount = 0;
+        const MIN_ACCUMULATION_MONTHS = 600;
 
         for (const month of allMonths) {
             const e = earningsModel.lookup[month];
@@ -695,7 +699,8 @@ const DataStore = {
             if (!cpiThen || cpiThen <= 0) continue;
             const realRetained = retained * (latestCPI / cpiThen);
             cumulativeIE += realRetained;
-            if (cumulativeIE > 0) {
+            monthCount++;
+            if (cumulativeIE > 0 && monthCount >= MIN_ACCUMULATION_MONTHS) {
                 integratedEquityByMonth[month] = cumulativeIE;
             }
         }
