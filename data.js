@@ -120,11 +120,9 @@ const DataStore = {
 
     // ─── Yahoo Finance fetcher (v8 chart — no crumb needed) ─────────
 
-    async fetchYahoo(symbol, startDate) {
-        const period1 = Math.floor(new Date(startDate).getTime() / 1000);
-        const period2 = Math.floor(Date.now() / 1000);
-        const qs = `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
+    async fetchYahoo(symbol) {
         const sym = encodeURIComponent(symbol);
+        const qs = '?range=max&interval=1d&includeAdjustedClose=true';
         // Try both Yahoo load-balancers, each direct then proxied
         const baseUrls = [
             `https://query1.finance.yahoo.com/v8/finance/chart/${sym}${qs}`,
@@ -218,11 +216,11 @@ const DataStore = {
         const series = {
             sp500: {
                 label: 'S&P 500',
-                fn: () => this.fetchYahoo('^GSPC', '1990-01-01'),
+                fn: () => this.fetchYahoo('^GSPC'),
             },
             vix: {
                 label: 'VIX',
-                fn: () => this.fetchYahoo('^VIX', '1990-01-01'),
+                fn: () => this.fetchYahoo('^VIX'),
             },
             unemployment: {
                 label: 'Unemployment',
