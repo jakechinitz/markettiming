@@ -123,7 +123,11 @@ const DataStore = {
 
     async fetchYahoo(symbol) {
         const sym = encodeURIComponent(symbol);
-        const qs = '?range=max&interval=1d&includeAdjustedClose=true';
+        // Use period1/period2 (not range=max) to guarantee daily granularity.
+        // range=max can silently return monthly data for long-history symbols like ^GSPC.
+        const period1 = Math.floor((Date.now() - 35 * 365.25 * 86400000) / 1000);
+        const period2 = Math.floor(Date.now() / 1000);
+        const qs = `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
         // Try both Yahoo load-balancers, each direct then proxied
         const baseUrls = [
             `https://query1.finance.yahoo.com/v8/finance/chart/${sym}${qs}`,
@@ -515,14 +519,12 @@ const DataStore = {
 
     computeCAPE() {
         const shiller = this.raw.shiller || [];
-        const sp500Data = this.raw.sp500 || [];
         const earningsModel = this.buildMonthlyEarningsLookup();
-        if (sp500Data.length === 0) {
+        const monthlySP = this.getBlendedMonthlySP();
+        if (monthlySP.length === 0) {
             this.processed.cape = [];
             return;
         }
-
-        const monthlySP = this.getMonthlyValues(sp500Data);
         const cpiByMonth = {};
         shiller.forEach(d => {
             if (d.cpi && d.cpi > 0) cpiByMonth[d.date.substring(0, 7)] = d.cpi;
@@ -579,7 +581,6 @@ const DataStore = {
 
     computeTrailingPE() {
         const shiller = this.raw.shiller || [];
-        const sp500Data = this.raw.sp500 || [];
 
         if (shiller.length > 0) {
             const pe = [];
@@ -596,9 +597,9 @@ const DataStore = {
             }
 
             // Nowcast: extend to present using last known earnings + growth rate
-            if (lastEntry && lastEntry.earnings > 0 && sp500Data.length > 0) {
+            if (lastEntry && lastEntry.earnings > 0) {
                 const lastShillerMonth = lastEntry.date.substring(0, 7);
-                const monthlySP = this.getMonthlyValues(sp500Data);
+                const monthlySP = this.getBlendedMonthlySP();
 
                 let earningsGrowthRate = 0;
                 if (shiller.length >= 13) {
@@ -635,8 +636,7 @@ const DataStore = {
     // P/IE (Price to Integrated Equity) — OSAM "Earnings Mirage" methodology
     computePIE() {
         const shiller = this.raw.shiller || [];
-        const sp500Data = this.raw.sp500 || [];
-        if (shiller.length === 0 || sp500Data.length === 0) {
+        if (shiller.length === 0) {
             this.processed.pie = [];
             return;
         }
@@ -668,7 +668,7 @@ const DataStore = {
             if (avgE > 0) lastPayoutRatio = Math.min(1, Math.max(0, avgD / avgE));
         }
 
-        const monthlySP = this.getMonthlyValues(sp500Data);
+        const monthlySP = this.getBlendedMonthlySP();
         const allMonths = Object.keys(earningsModel.lookup).sort();
         if (allMonths.length === 0) {
             this.processed.pie = [];
@@ -720,6 +720,24 @@ const DataStore = {
     },
 
     // ─── Helpers ──────────────────────────────────────────────────────
+
+    // Blended monthly S&P 500: Shiller historical + Yahoo recent (for CAPE/PIE/backtest)
+    // Yahoo daily data only covers ~35 years; Shiller provides monthly back to 1871.
+    getBlendedMonthlySP() {
+        const monthly = {};
+        // Layer 1: Shiller historical S&P prices
+        (this.raw.shiller || []).forEach(d => {
+            if (d.sp500 && d.sp500 > 0) {
+                monthly[d.date.substring(0, 7)] = { date: d.date, value: d.sp500 };
+            }
+        });
+        // Layer 2: Yahoo recent (overwrites Shiller for overlapping months — more current)
+        (this.raw.sp500 || []).forEach(d => {
+            const key = d.date.substring(0, 7);
+            monthly[key] = d;
+        });
+        return Object.values(monthly).sort((a, b) => a.date.localeCompare(b.date));
+    },
 
     // Compute mean and standard deviation for a processed series (non-nowcast values only)
     getSeriesStats(seriesName) {
