@@ -23,6 +23,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Inject FRED API keys
+        run: |
+          sed -i "s/__FRED_API_KEY_1__/${{ secrets.FRED_API_KEY_1 }}/g" config.js
+          sed -i "s/__FRED_API_KEY_2__/${{ secrets.FRED_API_KEY_2 }}/g" config.js
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
