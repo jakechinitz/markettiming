@@ -178,13 +178,20 @@ const Strategy = {
             signals.pieDetail = `P/IE at ${pie.value.toFixed(2)}`;
         }
 
-        // 6. Investor allocation (uses nowcast)
+        // 6. Investor allocation (uses nowcast, stddev-based thresholds)
         const alloc = DataStore.getLatest('equityAlloc');
         if (alloc) {
-            if (alloc.value < CONFIG.STRATEGY.ALLOC_LOW) signals.allocation = 1;
-            else if (alloc.value > CONFIG.STRATEGY.ALLOC_HIGH) signals.allocation = -1;
-            else signals.allocation = 0;
-            signals.allocationDetail = `Allocation at ${alloc.value.toFixed(1)}%`;
+            const allocStats = DataStore.getSeriesStats('equityAlloc');
+            if (allocStats) {
+                const z = (alloc.value - allocStats.mean) / allocStats.stddev;
+                if (z >= CONFIG.STRATEGY.ALLOC_BEARISH_STDDEV) signals.allocation = -1;
+                else if (z <= CONFIG.STRATEGY.ALLOC_BULLISH_STDDEV) signals.allocation = 1;
+                else signals.allocation = 0;
+                signals.allocationDetail = `Allocation ${alloc.value.toFixed(1)}% (z=${z.toFixed(2)}, μ=${allocStats.mean.toFixed(1)}%, σ=${allocStats.stddev.toFixed(1)}%)`;
+            } else {
+                signals.allocation = 0;
+                signals.allocationDetail = `Allocation at ${alloc.value.toFixed(1)}% (no stats)`;
+            }
             signals.allocationNowcast = !!alloc.nowcast;
         }
 
@@ -282,6 +289,10 @@ const Strategy = {
     // Compute a single signal score at a given date using lagged data
     // This is what an investor would have actually known at `dateStr`
     computeLaggedScore(dateStr) {
+        // Cache allocation stats (computed once)
+        if (!this._allocStats) {
+            this._allocStats = DataStore.getSeriesStats('equityAlloc');
+        }
         let score = 0;
         let count = 0;
 
@@ -338,11 +349,12 @@ const Strategy = {
             count++;
         }
 
-        // 6. Equity allocation (1 month lag — nowcasted)
+        // 6. Equity allocation (1 month lag — nowcasted, stddev-based)
         const alloc = DataStore.getLaggedValue('equityAlloc', dateStr, CONFIG.PUB_LAG.EQUITY_ALLOC);
-        if (alloc) {
-            if (alloc.value < CONFIG.STRATEGY.ALLOC_LOW) score += 1;
-            else if (alloc.value > CONFIG.STRATEGY.ALLOC_HIGH) score -= 1;
+        if (alloc && this._allocStats) {
+            const z = (alloc.value - this._allocStats.mean) / this._allocStats.stddev;
+            if (z >= CONFIG.STRATEGY.ALLOC_BEARISH_STDDEV) score -= 1;
+            else if (z <= CONFIG.STRATEGY.ALLOC_BULLISH_STDDEV) score += 1;
             count++;
         }
 

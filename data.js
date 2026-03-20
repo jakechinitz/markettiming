@@ -9,6 +9,7 @@ const DataStore = {
     CORS_PROXIES: [
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
         url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+        url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
     ],
 
     // Shiller data (GitHub-hosted CSV, CORS-friendly, updated monthly, data from 1871)
@@ -135,7 +136,7 @@ const DataStore = {
             for (const url of urls) {
                 try {
                     console.log(`[Yahoo] ${symbol} via ${url.substring(0, 55)}...`);
-                    const resp = await this._fetch(url, 15000);
+                    const resp = await this._fetch(url, 30000);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     json = await resp.json();
                     break;
@@ -719,6 +720,18 @@ const DataStore = {
     },
 
     // ─── Helpers ──────────────────────────────────────────────────────
+
+    // Compute mean and standard deviation for a processed series (non-nowcast values only)
+    getSeriesStats(seriesName) {
+        const data = this.processed[seriesName];
+        if (!data || data.length === 0) return null;
+        const confirmed = data.filter(d => !d.nowcast).map(d => d.value);
+        if (confirmed.length < 2) return null;
+        const mean = confirmed.reduce((s, v) => s + v, 0) / confirmed.length;
+        const variance = confirmed.reduce((s, v) => s + (v - mean) ** 2, 0) / confirmed.length;
+        const stddev = Math.sqrt(variance);
+        return { mean, stddev, count: confirmed.length };
+    },
 
     _median(values) {
         if (!values || values.length === 0) return null;
