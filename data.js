@@ -1,27 +1,21 @@
 // Data fetching, processing, and nowcasting module
-// Sources: Yahoo Finance (market data), FRED (economic data), Shiller (earnings/CAPE)
+// Sources: Yahoo Finance (S&P 500, VIX), FRED CSV (economic data), Shiller/GitHub CSV (historical earnings/CAPE)
 const DataStore = {
     raw: {},
     processed: {},
     status: {},
 
-    // CORS proxies — tried in order for requests that need proxying
-    // Note: free proxies are inherently unreliable; we try several
+    // CORS proxies — tried in order when direct fetch fails
     CORS_PROXIES: [
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
         url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-        url => `https://proxy.corsfix.com/?${encodeURIComponent(url)}`,
-        url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-        url => `https://crossorigin.me/${url}`,
     ],
 
-    // Shiller data source (GitHub-hosted CSV, CORS-friendly, updated monthly)
+    // Shiller data (GitHub-hosted CSV, CORS-friendly, updated monthly, data from 1871)
     SHILLER_CSV_URL: 'https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv',
-    SHILLER_XLS_URL: 'http://www.econ.yale.edu/~shiller/data/ie_data.xls',
 
     // ─── Low-level fetchers ──────────────────────────────────────────
 
-    // Fetch with a timeout (some browsers don't support AbortSignal.timeout)
     async _fetch(url, timeoutMs = 15000) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -33,51 +27,33 @@ const DataStore = {
         }
     },
 
-    // Parse FRED JSON response into [{date, value}, ...]
-    _parseFredResponse(json, seriesId) {
-        if (json.error_message) throw new Error(`FRED: ${json.error_message}`);
-        const obs = (json.observations || [])
-            .filter(o => o.value !== '.')
-            .map(o => ({ date: o.date, value: parseFloat(o.value) }));
-        if (obs.length === 0) throw new Error(`No data for ${seriesId}`);
-        return obs;
+    // Try a URL directly, then through each CORS proxy
+    async _fetchWithProxies(url, timeoutMs = 15000) {
+        const errors = [];
+        const urls = [url, ...this.CORS_PROXIES.map(make => make(url))];
+        for (const u of urls) {
+            try {
+                const resp = await this._fetch(u, timeoutMs);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return resp;
+            } catch (err) {
+                errors.push(err.message);
+            }
+        }
+        throw new Error(errors.join(' | '));
     },
 
-    // Build a FRED API URL
-    _fredUrl(seriesId, apiKey, startDate) {
-        const params = new URLSearchParams({
-            series_id: seriesId,
-            file_type: 'json',
-            sort_order: 'asc',
-        });
-        if (apiKey) params.set('api_key', apiKey);
-        if (startDate) params.set('observation_start', startDate);
-        return `${CONFIG.FRED_BASE_URL}?${params}`;
-    },
+    // ─── FRED CSV fetcher (no API key needed) ────────────────────────
 
-    // Build a FRED CSV URL (no API key required)
     _fredCsvUrl(seriesId, startDate) {
         const params = new URLSearchParams({ id: seriesId });
         if (startDate) params.set('cosd', startDate);
         return `https://fred.stlouisfed.org/graph/fredgraph.csv?${params}`;
     },
 
-    // Get valid FRED API keys (filter out placeholders, support URL param for local dev)
-    _getFredKeys() {
-        const keys = (CONFIG.FRED_API_KEYS || []).filter(k => k && !k.startsWith('__'));
-        // Support ?fred_key=xxx URL param for local development
-        try {
-            const urlKey = new URLSearchParams(window.location.search).get('fred_key');
-            if (urlKey && !keys.includes(urlKey)) keys.unshift(urlKey);
-        } catch (e) { /* ignore */ }
-        return keys;
-    },
-
-    // Parse FRED CSV response into [{date, value}, ...]
     _parseFredCsv(csv, seriesId) {
         const lines = csv.trim().split('\n');
         if (lines.length < 2) throw new Error(`No CSV data for ${seriesId}`);
-
         const out = [];
         for (let i = 1; i < lines.length; i++) {
             const [date, valueRaw] = lines[i].split(',');
@@ -86,318 +62,80 @@ const DataStore = {
             if (isNaN(value)) continue;
             out.push({ date, value });
         }
-
-        if (out.length === 0) throw new Error(`No valid CSV observations for ${seriesId}`);
+        if (out.length === 0) throw new Error(`No valid observations for ${seriesId}`);
         return out;
     },
 
-    // ─── FRED fetcher (tries all keys, then proxied) ─────────────────
     async fetchFred(seriesId, startDate) {
-        const keys = this._getFredKeys();
-        const keyAttempts = keys.length > 0 ? keys : [null];
-        const errors = [];
-
-        // Strategy 1: Direct fetch with each API key
-        for (const key of keyAttempts) {
-            try {
-                const url = this._fredUrl(seriesId, key, startDate);
-                console.log(
-                    key
-                        ? `[FRED] Trying direct ${seriesId} with key ...${key.slice(-4)}`
-                        : `[FRED] Trying direct ${seriesId} without API key`
-                );
-                const resp = await this._fetch(url);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const json = await resp.json();
-                return this._parseFredResponse(json, seriesId);
-            } catch (err) {
-                const tag = key ? key.slice(-4) : 'no-key';
-                errors.push(`direct(${tag}): ${err.message}`);
-            }
-        }
-
-        // Strategy 2: Route through CORS proxies (in case direct CORS is blocked)
-        for (const key of keyAttempts) {
-            const fredUrl = this._fredUrl(seriesId, key, startDate);
-            for (const makeProxy of this.CORS_PROXIES) {
-                try {
-                    const proxied = makeProxy(fredUrl);
-                    console.log(`[FRED] Trying proxied ${seriesId} via ${proxied.substring(0, 40)}...`);
-                    const resp = await this._fetch(proxied);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const json = await resp.json();
-                    return this._parseFredResponse(json, seriesId);
-                } catch (err) {
-                    const tag = key ? key.slice(-4) : 'no-key';
-                    errors.push(`proxy(${tag}): ${err.message}`);
-                }
-            }
-        }
-
-        // Strategy 3: FRED CSV endpoint (no API key required)
-        const csvUrl = this._fredCsvUrl(seriesId, startDate);
-
-        // 3a) Direct CSV fetch
-        try {
-            console.log(`[FRED] Trying CSV ${seriesId} direct`);
-            const resp = await this._fetch(csvUrl);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const csv = await resp.text();
-            return this._parseFredCsv(csv, seriesId);
-        } catch (err) {
-            errors.push(`csv-direct: ${err.message}`);
-        }
-
-        // 3b) Proxied CSV fetch
-        for (const makeProxy of this.CORS_PROXIES) {
-            try {
-                const proxied = makeProxy(csvUrl);
-                console.log(`[FRED] Trying CSV ${seriesId} via ${proxied.substring(0, 40)}...`);
-                const resp = await this._fetch(proxied);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                const csv = await resp.text();
-                return this._parseFredCsv(csv, seriesId);
-            } catch (err) {
-                errors.push(`csv-proxy: ${err.message}`);
-            }
-        }
-
-        throw new Error(`FRED failed for ${seriesId}: ${errors.slice(0, 3).join(' | ')}`);
-    },
-
-
-    // Try multiple free FRED earnings series IDs and return the first usable one
-    async fetchSP500Earnings(startDate = '1990-01-01') {
-        const candidateIds = ['SP500EPS', 'SP500EARNINGS', 'SP500EARN'];
-        const errors = [];
-
-        for (const id of candidateIds) {
-            try {
-                const data = await this.fetchFred(id, startDate);
-                const clean = (data || []).filter(d => d.value != null && d.value > 0);
-                if (clean.length >= 8) {
-                    console.log(`[FRED] Using earnings series ${id} (${clean.length} pts)`);
-                    return clean;
-                }
-                throw new Error(`only ${clean.length} points`);
-            } catch (err) {
-                errors.push(`${id}: ${err.message}`);
-            }
-        }
-
-        throw new Error(`No usable S&P earnings series: ${errors.slice(0, 3).join(' | ')}`);
-    },
-
-
-    // ─── Yahoo Finance S&P 500 earnings (derived from trailing PE) ───
-    // Yahoo deprecated v6 in 2023 and v10 now requires crumb+cookie.
-    // Strategy: try v7 quote (current, needs crumb so may fail from browser),
-    // then fall back to deriving from chart metadata + known PE sources.
-    async fetchYahooSPEarnings() {
-        const errors = [];
-
-        // Strategy 1: v7 quote endpoint (current Yahoo API, may need crumb)
-        const quoteUrls = [
-            'https://query1.finance.yahoo.com/v7/finance/quote?symbols=%5EGSPC',
-            'https://query2.finance.yahoo.com/v7/finance/quote?symbols=%5EGSPC',
-        ];
-
-        for (const baseUrl of quoteUrls) {
-            const urlsToTry = [baseUrl, ...this.CORS_PROXIES.map(make => make(baseUrl))];
-            for (const url of urlsToTry) {
-                try {
-                    const resp = await this._fetch(url, 10000);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const json = await resp.json();
-
-                    const quote = json?.quoteResponse?.result?.[0];
-                    const price = quote?.regularMarketPrice;
-                    const trailingPE = quote?.trailingPE;
-
-                    if (!price || !trailingPE || trailingPE <= 0) {
-                        throw new Error('Missing price or trailingPE');
-                    }
-
-                    const eps = parseFloat((price / trailingPE).toFixed(2));
-                    if (!isFinite(eps) || eps <= 0) throw new Error(`Invalid EPS: ${eps}`);
-
-                    // Capture dividend rate for P/IE
-                    const divRate = quote?.trailingAnnualDividendRate;
-                    if (divRate && divRate > 0) {
-                        this._yahooDividendRate = divRate;
-                        console.log(`[Yahoo] Trailing annual dividend rate: ${divRate}`);
-                    }
-
-                    const now = new Date();
-                    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-                        .toISOString().substring(0, 10);
-
-                    console.log(`[Yahoo Earnings] v7 EPS=${eps} from price=${price}, PE=${trailingPE}`);
-                    return [{ date, value: eps }];
-                } catch (err) {
-                    errors.push(`v7: ${err.message}`);
-                }
-            }
-        }
-
-        // Strategy 2: Use chart metadata price (captured by fetchYahoo) + Shiller CAPE
-        // This works because fetchYahoo runs in parallel and may already have metadata
-        try {
-            const meta = this._yahooChartMeta?.['^GSPC'] || this._yahooChartMeta?.['%5EGSPC'];
-            if (meta?.regularMarketPrice) {
-                const price = meta.regularMarketPrice;
-                // Use a reasonable trailing PE estimate from last known Shiller data
-                // S&P 500 trailing PE typically ranges 15-30
-                const shiller = this.raw?.shiller;
-                const lastCAPE = shiller?.filter(d => d.cape > 0)?.slice(-1)?.[0]?.cape;
-                if (lastCAPE && lastCAPE > 0) {
-                    // CAPE is 10yr avg earnings; trailing PE is ~60-80% of CAPE for estimation
-                    const estimatedPE = lastCAPE * 0.7;
-                    const eps = parseFloat((price / estimatedPE).toFixed(2));
-                    if (isFinite(eps) && eps > 0) {
-                        const now = new Date();
-                        const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-                            .toISOString().substring(0, 10);
-                        console.log(`[Yahoo Earnings] Chart meta EPS=${eps} from price=${price}, estPE=${estimatedPE.toFixed(1)}`);
-                        return [{ date, value: eps }];
-                    }
-                }
-            }
-            throw new Error('No chart metadata available');
-        } catch (err) {
-            errors.push(`chart-meta: ${err.message}`);
-        }
-
-        throw new Error(`Yahoo earnings failed: ${errors.slice(0, 3).join(' | ')}`);
+        const url = this._fredCsvUrl(seriesId, startDate);
+        console.log(`[FRED] Fetching ${seriesId} CSV...`);
+        const resp = await this._fetchWithProxies(url, 20000);
+        const csv = await resp.text();
+        const data = this._parseFredCsv(csv, seriesId);
+        console.log(`[FRED] ${seriesId}: ${data.length} observations`);
+        return data;
     },
 
     // ─── Yahoo Finance fetcher (v8 chart — no crumb needed) ─────────
+
     async fetchYahoo(symbol, startDate) {
-        const period1 = Math.floor(new Date(startDate).getTime() / 1000);
+        const period1 = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : 0;
         const period2 = Math.floor(Date.now() / 1000);
-        // Try both query1 and query2 load-balancers
-        const yahooUrls = [
-            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
-                + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`,
-            `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
-                + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`,
-        ];
+        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
+            + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
 
-        const errors = [];
+        console.log(`[Yahoo] Fetching ${symbol}...`);
+        const resp = await this._fetchWithProxies(yahooUrl, 15000);
+        const json = await resp.json();
 
-        for (const yahooUrl of yahooUrls) {
-            // Try direct first (works if browser/extension allows, or in non-browser contexts)
-            const urlsToTry = [yahooUrl, ...this.CORS_PROXIES.map(make => make(yahooUrl))];
-            for (const url of urlsToTry) {
-                try {
-                    const resp = await this._fetch(url, 12000);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const json = await resp.json();
+        const result = json?.chart?.result?.[0];
+        if (!result || !result.timestamp) throw new Error('No chart data');
 
-                    const result = json?.chart?.result?.[0];
-                    if (!result || !result.timestamp) throw new Error('No chart data');
+        const timestamps = result.timestamp;
+        const closes = result.indicators?.quote?.[0]?.close || [];
+        const adjCloses = result.indicators?.adjclose?.[0]?.adjclose || closes;
 
-                    // Store chart meta for potential use (has regularMarketPrice)
-                    if (result.meta?.regularMarketPrice) {
-                        this._yahooChartMeta = this._yahooChartMeta || {};
-                        this._yahooChartMeta[symbol] = result.meta;
-                    }
-
-                    const timestamps = result.timestamp;
-                    const closes = result.indicators?.quote?.[0]?.close || [];
-                    const adjCloses = result.indicators?.adjclose?.[0]?.adjclose || closes;
-
-                    const data = [];
-                    for (let i = 0; i < timestamps.length; i++) {
-                        const val = adjCloses[i] ?? closes[i];
-                        if (val == null || isNaN(val)) continue;
-                        const d = new Date(timestamps[i] * 1000);
-                        data.push({ date: d.toISOString().substring(0, 10), value: val });
-                    }
-                    if (data.length === 0) throw new Error('No valid data points');
-                    console.log(`[Yahoo] ${symbol}: ${data.length} data points from ${url.substring(0, 60)}`);
-                    return data;
-                } catch (err) {
-                    errors.push(err.message);
-                }
-            }
+        const data = [];
+        for (let i = 0; i < timestamps.length; i++) {
+            const val = adjCloses[i] ?? closes[i];
+            if (val == null || isNaN(val)) continue;
+            const d = new Date(timestamps[i] * 1000);
+            data.push({ date: d.toISOString().substring(0, 10), value: val });
         }
-        throw new Error(`Yahoo failed for ${symbol}: ${errors.slice(0, 3).join(' | ')}`);
+        if (data.length === 0) throw new Error('No valid data points');
+        console.log(`[Yahoo] ${symbol}: ${data.length} daily points (${data[0].date} → ${data[data.length-1].date})`);
+        return data;
     },
 
-
-    // ─── Shiller data fetcher (2-tier fallback) ─────────────────────
+    // ─── Shiller data fetcher (GitHub CSV, CORS-friendly) ───────────
     // Returns [{date, sp500, dividend, earnings, cape, cpi}, ...]
-    // Source 1: GitHub CSV (datasets/s-and-p-500) — CORS-friendly, data from 1871
-    // Source 2: Yale XLS via CORS proxy — original source, binary format (needs SheetJS)
+
     async fetchShillerData() {
-        const errors = [];
-
-        // Source 1: GitHub CSV (updated monthly, CORS-friendly)
-        try {
-            console.log('[Shiller] Trying GitHub CSV...');
-            const resp = await this._fetch(this.SHILLER_CSV_URL, 20000);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const csv = await resp.text();
-            const data = this._parseShillerCSV(csv);
-            if (data.length >= 100) {
-                console.log(`[Shiller] GitHub CSV: ${data.length} months`);
-                return data;
-            }
-            throw new Error(`Only ${data.length} rows`);
-        } catch (err) {
-            errors.push(`CSV: ${err.message}`);
-            console.warn('[Shiller] GitHub CSV failed:', err.message);
-        }
-
-        // Source 2: Yale XLS via CORS proxy (needs SheetJS/xlsx library)
-        if (typeof XLSX !== 'undefined') {
-            for (const makeProxy of this.CORS_PROXIES) {
-                try {
-                    const url = makeProxy(this.SHILLER_XLS_URL);
-                    console.log(`[Shiller] Trying Yale XLS via proxy...`);
-                    const resp = await this._fetch(url, 30000);
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const buf = await resp.arrayBuffer();
-                    const data = this._parseShillerXLS(buf);
-                    if (data.length >= 100) {
-                        console.log(`[Shiller] Yale XLS: ${data.length} months`);
-                        return data;
-                    }
-                    throw new Error(`Only ${data.length} rows`);
-                } catch (err) {
-                    errors.push(`XLS: ${err.message}`);
-                    console.warn('[Shiller] XLS proxy failed:', err.message);
-                }
-            }
-        }
-
-        throw new Error(`Shiller data failed: ${errors.slice(0, 3).join(' | ')}`);
+        console.log('[Shiller] Fetching GitHub CSV...');
+        const resp = await this._fetchWithProxies(this.SHILLER_CSV_URL, 20000);
+        const csv = await resp.text();
+        const data = this._parseShillerCSV(csv);
+        if (data.length < 100) throw new Error(`Only ${data.length} rows`);
+        console.log(`[Shiller] ${data.length} months (${data[0].date} → ${data[data.length-1].date})`);
+        return data;
     },
 
     // Parse GitHub CSV (datasets/s-and-p-500 format)
     // Columns: Date,SP500,Dividend,Earnings,Consumer Price Index,Long Interest Rate,Real Price,Real Dividend,Real Earnings,PE10
     _parseShillerCSV(csv) {
         const lines = csv.trim().split('\n');
-        const header = lines[0].split(',');
         const data = [];
-
         for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(',');
             if (cols.length < 10) continue;
-
-            const dateStr = cols[0]; // YYYY-MM format or YYYY-MM-DD
+            const dateStr = cols[0];
             const sp500 = parseFloat(cols[1]);
             const dividend = parseFloat(cols[2]);
             const earnings = parseFloat(cols[3]);
             const cpi = parseFloat(cols[4]);
             const pe10 = parseFloat(cols[9]);
-
             if (!dateStr || (isNaN(sp500) && isNaN(earnings))) continue;
-
-            // Normalize date to YYYY-MM-01
             const date = dateStr.length <= 7 ? dateStr + '-01' : dateStr.substring(0, 10);
-
             data.push({
                 date,
                 sp500: isNaN(sp500) ? null : sp500,
@@ -410,147 +148,76 @@ const DataStore = {
         return data;
     },
 
-    // Parse Yale XLS (Shiller's ie_data.xls) using SheetJS
-    _parseShillerXLS(arrayBuffer) {
-        const wb = XLSX.read(arrayBuffer, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        const data = [];
-
-        // Find header row (contains "Date" and "P" or "Price")
-        let startRow = 0;
-        for (let i = 0; i < Math.min(rows.length, 20); i++) {
-            const row = rows[i].map(c => String(c).toLowerCase());
-            if (row.includes('date') || row.some(c => c.includes('price'))) {
-                startRow = i + 1;
-                break;
-            }
-        }
-
-        for (let i = startRow; i < rows.length; i++) {
-            const row = rows[i];
-            if (!row || row.length < 5) continue;
-
-            const dateVal = parseFloat(row[0]);
-            if (isNaN(dateVal) || dateVal < 1800) continue;
-
-            const yr = Math.floor(dateVal);
-            const moRaw = Math.round((dateVal - yr) * 100) || 1;
-            const mo = Math.min(12, Math.max(1, moRaw));
-            const date = `${yr}-${String(mo).padStart(2, '0')}-01`;
-            const sp500 = parseFloat(row[1]);
-            const dividend = parseFloat(row[2]);
-            const earnings = parseFloat(row[3]);
-            const cpi = parseFloat(row[4]);
-            const pe10 = parseFloat(row[10]);
-
-            if (isNaN(earnings) || earnings <= 0) continue;
-
-            data.push({
-                date,
-                sp500: isNaN(sp500) ? null : sp500,
-                dividend: isNaN(dividend) ? null : dividend,
-                earnings,
-                cape: isNaN(pe10) ? null : pe10,
-                cpi: isNaN(cpi) ? null : cpi,
-            });
-        }
-        return data;
-    },
-
-    // ─── Fetch with fallback chain ───────────────────────────────────
-    async fetchWithFallback(sources) {
-        const errors = [];
-        for (const src of sources) {
-            try {
-                const data = await src.fn();
-                return { data, source: src.name };
-            } catch (err) {
-                console.warn(`[${src.name}] ${err.message}`);
-                errors.push(`${src.name}: ${err.message}`);
-            }
-        }
-        throw new Error(errors.join(' | '));
-    },
-
     // ─── Main loader ─────────────────────────────────────────────────
+
     async loadAllSeries() {
         this.status = {};
 
+        // Fetch everything — Yahoo for market data, FRED for economic data, Shiller for historical
         const series = {
             sp500: {
                 label: 'S&P 500',
-                sources: [
-                    { name: 'Yahoo Finance', fn: () => this.fetchYahoo('^GSPC', '2000-01-01') },
-                    { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.SP500, '2000-01-01') },
-                ],
-            },
-            sp500Earnings: {
-                label: 'S&P 500 Earnings',
-                sources: [
-                    // FRED is primary — Yahoo quote endpoints need crumb+cookie from browser
-                    { name: 'FRED', fn: () => this.fetchSP500Earnings('1990-01-01') },
-                    { name: 'Yahoo Finance', fn: () => this.fetchYahooSPEarnings() },
-                ],
+                fn: () => this.fetchYahoo('^GSPC'),
             },
             vix: {
                 label: 'VIX',
-                sources: [
-                    { name: 'Yahoo Finance', fn: () => this.fetchYahoo('^VIX', '2000-01-01') },
-                    { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.VIXCLS, '2000-01-01') },
-                ],
+                fn: () => this.fetchYahoo('^VIX'),
             },
             unemployment: {
                 label: 'Unemployment',
-                sources: [
-                    { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.UNRATE, '1970-01-01') },
-                ],
+                fn: () => this.fetchFred(CONFIG.SERIES.UNRATE),
             },
             cpi: {
                 label: 'CPI',
-                sources: [
-                    { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.CPIAUCSL, '1970-01-01') },
-                ],
+                fn: () => this.fetchFred(CONFIG.SERIES.CPIAUCSL),
             },
             equityAlloc: {
                 label: 'Equity Allocation',
-                sources: [
-                    { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.EQUITY_ALLOC, '1950-01-01') },
-                ],
+                fn: () => this.fetchFred(CONFIG.SERIES.EQUITY_ALLOC),
             },
             icsa: {
                 label: 'Initial Claims',
-                sources: [
-                    { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.ICSA, '2000-01-01') },
-                ],
+                fn: () => this.fetchFred(CONFIG.SERIES.ICSA),
             },
             yieldCurve: {
                 label: 'Yield Curve',
-                sources: [
-                    { name: 'FRED', fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y, '1990-01-01') },
-                ],
+                fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y),
             },
             shiller: {
                 label: 'Shiller Earnings/CAPE',
-                sources: [
-                    { name: 'Shiller/Yale', fn: () => this.fetchShillerData() },
-                ],
+                fn: () => this.fetchShillerData(),
             },
         };
 
         const keys = Object.keys(series);
         const results = await Promise.allSettled(
-            keys.map(k => this.fetchWithFallback(series[k].sources))
+            keys.map(k => series[k].fn())
         );
 
         let loadedCount = 0;
         let failedCount = 0;
 
+        // Map source names from the fetch functions
+        const sourceNames = {
+            sp500: 'Yahoo Finance',
+            vix: 'Yahoo Finance',
+            unemployment: 'FRED',
+            cpi: 'FRED',
+            equityAlloc: 'FRED',
+            icsa: 'FRED',
+            yieldCurve: 'FRED',
+            shiller: 'Shiller/GitHub',
+        };
+
         keys.forEach((key, i) => {
             if (results[i].status === 'fulfilled') {
-                const { data, source } = results[i].value;
-                this.raw[key] = data;
-                this.status[key] = { ok: true, label: series[key].label, source, count: data.length };
+                this.raw[key] = results[i].value;
+                this.status[key] = {
+                    ok: true,
+                    label: series[key].label,
+                    source: sourceNames[key],
+                    count: results[i].value.length,
+                };
                 loadedCount++;
             } else {
                 const errMsg = results[i].reason?.message || 'Unknown error';
@@ -630,6 +297,7 @@ const DataStore = {
             return { date: d.date, value: d.value, ma12: ma, nowcast: false };
         });
 
+        // Nowcast: use Initial Claims to estimate next unemployment reading
         const icsa = this.raw.icsa || [];
         if (icsa.length > 0 && withMA.length > 0) {
             const lastUnemp = withMA[withMA.length - 1];
@@ -683,6 +351,7 @@ const DataStore = {
             return { date: d.date, value: d.value, inflationRate: yoy, nowcast: false };
         });
 
+        // Nowcast: extrapolate 2 months using recent MoM trend
         if (data.length >= 4) {
             const last3MoM = [];
             for (let i = data.length - 3; i < data.length; i++) {
@@ -725,6 +394,7 @@ const DataStore = {
 
         const processed = data.map(d => ({ ...d, nowcast: false }));
 
+        // Nowcast: project forward using S&P 500 price changes
         const sp = this.raw.sp500 || [];
         if (sp.length > 0 && processed.length > 0) {
             const lastAlloc = processed[processed.length - 1];
@@ -851,7 +521,6 @@ const DataStore = {
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
 
-        // Strategy 1: Compute from Shiller's actual trailing 12-month earnings
         if (shiller.length > 0) {
             const pe = [];
             const lastEntry = shiller[shiller.length - 1];
@@ -866,24 +535,22 @@ const DataStore = {
                 }
             }
 
-            // Extend to present: use last known earnings with current price
+            // Nowcast: extend to present using last known earnings + growth rate
             if (lastEntry && lastEntry.earnings > 0 && sp500Data.length > 0) {
                 const lastShillerMonth = lastEntry.date.substring(0, 7);
                 const monthlySP = this.getMonthlyValues(sp500Data);
 
-                // Estimate earnings growth: annualized trend from last 12 months of Shiller data
                 let earningsGrowthRate = 0;
                 if (shiller.length >= 13) {
                     const e12ago = shiller[shiller.length - 13].earnings;
                     if (e12ago > 0) {
-                        earningsGrowthRate = (lastEntry.earnings / e12ago) - 1; // annual rate
+                        earningsGrowthRate = (lastEntry.earnings / e12ago) - 1;
                     }
                 }
 
                 for (const sp of monthlySP) {
                     const spMonth = sp.date.substring(0, 7);
                     if (spMonth > lastShillerMonth) {
-                        // Extrapolate earnings using observed growth rate
                         const monthsDiff = (new Date(sp.date) - new Date(lastEntry.date)) / (30.44 * 86400000);
                         const projEarnings = lastEntry.earnings * Math.pow(1 + earningsGrowthRate, monthsDiff / 12);
                         if (projEarnings > 0) {
@@ -906,10 +573,6 @@ const DataStore = {
     },
 
     // P/IE (Price to Integrated Equity) — OSAM "Earnings Mirage" methodology
-    // Integrated Equity = cumulative sum of inflation-adjusted retained earnings
-    // For each month: retained = earnings - dividends, adjusted to current CPI
-    // P/IE = Price / Integrated Equity (per share)
-    // Reference: Jesse Livermore / O'Shaughnessy Asset Management, "The Earnings Mirage" (2019)
     computePIE() {
         const shiller = this.raw.shiller || [];
         const sp500Data = this.raw.sp500 || [];
@@ -918,7 +581,6 @@ const DataStore = {
             return;
         }
 
-        // Build CPI lookup: Shiller historical + FRED for recent months
         const cpiByMonth = {};
         shiller.forEach(d => {
             if (d.cpi && d.cpi > 0) cpiByMonth[d.date.substring(0, 7)] = d.cpi;
@@ -927,8 +589,6 @@ const DataStore = {
             if (d.value && d.value > 0) cpiByMonth[d.date.substring(0, 7)] = d.value;
         });
 
-        // Build monthly earnings and dividends from Shiller data
-        // Shiller earnings/dividends are trailing 12-month per-share values
         const earningsModel = this.buildMonthlyEarningsLookup();
         const dividendByMonth = {};
         shiller.forEach(d => {
@@ -937,11 +597,10 @@ const DataStore = {
             }
         });
 
-        // For months beyond Shiller, use Yahoo dividend rate if available, else estimate from payout ratio
-        const yahooDivRate = this._yahooDividendRate || null; // trailing annual dividend per share
+        // Estimate payout ratio from recent Shiller data for months beyond Shiller
         const shillerSorted = [...shiller].filter(d => d.earnings > 0 && d.dividend != null)
             .sort((a, b) => a.date.localeCompare(b.date));
-        let lastPayoutRatio = 0.4; // sensible default
+        let lastPayoutRatio = 0.4;
         if (shillerSorted.length >= 12) {
             const recent = shillerSorted.slice(-12);
             const avgE = recent.reduce((s, d) => s + d.earnings, 0) / recent.length;
@@ -949,17 +608,13 @@ const DataStore = {
             if (avgE > 0) lastPayoutRatio = Math.min(1, Math.max(0, avgD / avgE));
         }
 
-        // Get monthly S&P prices for the output timeline
         const monthlySP = this.getMonthlyValues(sp500Data);
-
-        // Sort all months we have earnings for
         const allMonths = Object.keys(earningsModel.lookup).sort();
         if (allMonths.length === 0) {
             this.processed.pie = [];
             return;
         }
 
-        // Get latest CPI for adjusting all retained earnings to current dollars
         const cpiSorted = Object.entries(cpiByMonth).sort((a, b) => a[0].localeCompare(b[0]));
         const latestCPI = cpiSorted.length > 0 ? cpiSorted[cpiSorted.length - 1][1] : null;
         if (!latestCPI) {
@@ -967,32 +622,24 @@ const DataStore = {
             return;
         }
 
-        // Compute integrated equity: cumulative sum of inflation-adjusted monthly retained earnings
-        // Earnings/dividends in Shiller are annualized trailing 12-month values,
-        // so monthly retained = (earnings - dividends) / 12
+        // Compute integrated equity: cumulative inflation-adjusted retained earnings
         const integratedEquityByMonth = {};
         let cumulativeIE = 0;
 
         for (const month of allMonths) {
             const e = earningsModel.lookup[month];
             if (!e || e <= 0) continue;
-
-            // Use Shiller dividend if available, else Yahoo annual rate, else payout ratio estimate
-            const d = dividendByMonth[month] ?? yahooDivRate ?? (e * lastPayoutRatio);
-            const retained = Math.max(0, e - d) / 12; // monthly portion of annual retained earnings
+            const d = dividendByMonth[month] ?? (e * lastPayoutRatio);
+            const retained = Math.max(0, e - d) / 12;
             const cpiThen = cpiByMonth[month];
             if (!cpiThen || cpiThen <= 0) continue;
-
-            // Adjust retained earnings to current dollars
             const realRetained = retained * (latestCPI / cpiThen);
             cumulativeIE += realRetained;
-
             if (cumulativeIE > 0) {
                 integratedEquityByMonth[month] = cumulativeIE;
             }
         }
 
-        // Build P/IE series
         const pie = [];
         const shillerMonths = new Set(shiller.map(d => d.date.substring(0, 7)));
         const confirmedCutoff = [...shillerMonths].sort().slice(-1)[0] || null;
@@ -1001,7 +648,6 @@ const DataStore = {
             const monthKey = sp.date.substring(0, 7);
             const ie = integratedEquityByMonth[monthKey];
             if (!ie || ie <= 0 || !sp.value || sp.value <= 0) continue;
-
             pie.push({
                 date: sp.date,
                 value: parseFloat((sp.value / ie).toFixed(2)),
@@ -1015,7 +661,6 @@ const DataStore = {
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
-
     _median(values) {
         if (!values || values.length === 0) return null;
         const sorted = [...values].sort((a, b) => a - b);
@@ -1023,95 +668,50 @@ const DataStore = {
         return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
     },
 
-    // Build a monthly earnings lookup that blends Shiller history with fresher data sources.
-    // Priority: Shiller (historical) → FRED/Yahoo earnings → growth-rate projection
-    // Returns {lookup, hasFreshFeed} where lookup[YYYY-MM] = earnings estimate for that month.
+    // Build monthly earnings lookup: Shiller historical + growth-rate projection
     buildMonthlyEarningsLookup() {
         const shiller = this.raw.shiller || [];
-        const fred = this.raw.sp500Earnings || [];
         const lookup = {};
-        let hasFreshFeed = false;
 
-        // Layer 1: Shiller historical earnings (most authoritative for past data)
+        // Shiller historical earnings (most authoritative, monthly from 1871)
         shiller.forEach(d => {
             if (d.earnings && d.earnings > 0) lookup[d.date.substring(0, 7)] = d.earnings;
         });
 
-        // Layer 2: Blend in FRED/Yahoo direct earnings (fills gaps & extends forward)
-        if (fred.length >= 4) {
-            const fredByMonth = {};
-            fred.forEach(d => {
-                if (d.value && d.value > 0) fredByMonth[d.date.substring(0, 7)] = d.value;
-            });
+        // Project forward from last known earnings using growth rate
+        const monthKeys = Object.keys(lookup).sort();
+        if (monthKeys.length > 0) {
+            const latestSPDate = (this.raw.sp500 || []).slice(-1)[0]?.date;
+            if (latestSPDate) {
+                const lastKey = monthKeys[monthKeys.length - 1];
+                const lastVal = lookup[lastKey];
+                if (lastVal && lastVal > 0) {
+                    const growthSamples = [];
+                    for (let i = Math.max(12, monthKeys.length - 36); i < monthKeys.length; i++) {
+                        const cur = lookup[monthKeys[i]];
+                        const prev = lookup[monthKeys[i - 12]];
+                        if (cur && prev && prev > 0) growthSamples.push((cur / prev) - 1);
+                    }
+                    const annualGrowth = growthSamples.length > 0
+                        ? growthSamples.reduce((sum, g) => sum + g, 0) / growthSamples.length
+                        : 0;
 
-            // Compute scale factor to align FRED earnings to Shiller's basis
-            const scaleSamples = [];
-            Object.keys(fredByMonth).forEach(month => {
-                if (lookup[month] && fredByMonth[month] > 0) {
-                    scaleSamples.push(lookup[month] / fredByMonth[month]);
+                    const end = new Date(latestSPDate);
+                    let cursor = new Date(`${lastKey}-01T00:00:00Z`);
+                    while (cursor < end) {
+                        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+                        const mk = cursor.toISOString().substring(0, 7);
+                        if (lookup[mk]) continue;
+                        const monthsDiff = (cursor.getUTCFullYear() - parseInt(lastKey.substring(0, 4), 10)) * 12
+                            + (cursor.getUTCMonth() - (parseInt(lastKey.substring(5, 7), 10) - 1));
+                        const projected = lastVal * Math.pow(1 + annualGrowth, monthsDiff / 12);
+                        if (projected > 0) lookup[mk] = projected;
+                    }
                 }
-            });
-            const scale = this._median(scaleSamples) || 1;
-
-            // Extend month-by-month, carrying latest quarterly forward
-            const fredSorted = [...fred].sort((a, b) => a.date.localeCompare(b.date));
-            const start = new Date(fredSorted[0].date);
-            const end = new Date((this.raw.sp500 || []).slice(-1)[0]?.date || Date.now());
-            let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-            let j = 0;
-            let lastVal = null;
-
-            while (cursor <= end) {
-                const monthKey = cursor.toISOString().substring(0, 7);
-                while (j < fredSorted.length && fredSorted[j].date.substring(0, 7) <= monthKey) {
-                    if (fredSorted[j].value > 0) lastVal = fredSorted[j].value;
-                    j++;
-                }
-                if (lastVal && !lookup[monthKey]) lookup[monthKey] = lastVal * scale;
-                cursor.setUTCMonth(cursor.getUTCMonth() + 1);
             }
-            hasFreshFeed = true;
         }
 
-        // Layer 3: Project forward from last known earnings (growth-rate extrapolation)
-        const projectForward = () => {
-            const monthKeys = Object.keys(lookup).sort();
-            if (monthKeys.length === 0) return;
-
-            const latestSPDate = (this.raw.sp500 || []).slice(-1)[0]?.date;
-            if (!latestSPDate) return;
-
-            const lastKey = monthKeys[monthKeys.length - 1];
-            const lastVal = lookup[lastKey];
-            if (!lastVal || lastVal <= 0) return;
-
-            const growthSamples = [];
-            for (let i = Math.max(12, monthKeys.length - 36); i < monthKeys.length; i++) {
-                const cur = lookup[monthKeys[i]];
-                const prev = lookup[monthKeys[i - 12]];
-                if (cur && prev && prev > 0) growthSamples.push((cur / prev) - 1);
-            }
-            const annualGrowth = growthSamples.length > 0
-                ? growthSamples.reduce((sum, g) => sum + g, 0) / growthSamples.length
-                : 0;
-
-            const end = new Date(latestSPDate);
-            let cursor = new Date(`${lastKey}-01T00:00:00Z`);
-            while (cursor < end) {
-                cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-                const mk = cursor.toISOString().substring(0, 7);
-                if (lookup[mk]) continue;
-                const monthsDiff = (cursor.getUTCFullYear() - parseInt(lastKey.substring(0, 4), 10)) * 12
-                    + (cursor.getUTCMonth() - (parseInt(lastKey.substring(5, 7), 10) - 1));
-                const projected = lastVal * Math.pow(1 + annualGrowth, monthsDiff / 12);
-                if (projected > 0) lookup[mk] = projected;
-            }
-        };
-
-        // Always try to project forward to fill any remaining gaps
-        projectForward();
-
-        return { lookup, hasFreshFeed };
+        return { lookup, hasFreshFeed: false };
     },
 
     getMonthlyValues(data) {

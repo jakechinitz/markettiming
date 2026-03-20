@@ -81,7 +81,7 @@ async function loadAllData() {
         console.error('Error loading data:', err);
         showStatus(
             `Failed to load data: ${err.message}. <br>
-            Make sure your <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">FRED API key</a> is valid and you have internet access.`,
+            Check your internet connection and try again.`,
             'error'
         );
     } finally {
