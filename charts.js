@@ -247,7 +247,7 @@ const Charts = {
                                 borderColor: CONFIG.COLORS.green,
                                 borderWidth: 1,
                                 borderDash: [5, 5],
-                                label: { content: 'Cheap (<20)', display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
+                                label: { content: `Cheap (<${CONFIG.STRATEGY.CAPE_LOW})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
                             },
                             high: {
                                 type: 'line',
@@ -256,7 +256,7 @@ const Charts = {
                                 borderColor: CONFIG.COLORS.red,
                                 borderWidth: 1,
                                 borderDash: [5, 5],
-                                label: { content: 'Expensive (>30)', display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
+                                label: { content: `Expensive (>${CONFIG.STRATEGY.CAPE_HIGH})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
                             },
                         },
                     },

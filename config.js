@@ -54,11 +54,11 @@ const CONFIG = {
     STRATEGY: {
         VIX_LOW: 20,
         VIX_HIGH: 30,
-        CAPE_LOW: 20,
-        CAPE_HIGH: 30,
+        CAPE_LOW: 15,
+        CAPE_HIGH: 25,
         PIE_LOW: 0.45,
         PIE_HIGH: 0.70,
-        ALLOC_BEARISH_STDDEV: 2,   // above +2σ → bearish (-1)
+        ALLOC_BEARISH_STDDEV: 1,   // above +1σ → bearish (-1)
         ALLOC_NEUTRAL_STDDEV: 1,   // between ±1σ → neutral (0), 1σ-2σ either side still neutral
         ALLOC_BULLISH_STDDEV: -1,  // below -1σ → bullish (+1)
         UNEMPLOYMENT_MA_MONTHS: 12,
