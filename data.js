@@ -123,12 +123,31 @@ const DataStore = {
     async fetchYahoo(symbol, startDate) {
         const period1 = Math.floor(new Date(startDate).getTime() / 1000);
         const period2 = Math.floor(Date.now() / 1000);
-        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
-            + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
-
-        console.log(`[Yahoo] Fetching ${symbol} from ${startDate}...`);
-        const resp = await this._fetchWithProxies(yahooUrl, 15000);
-        const json = await resp.json();
+        const qs = `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
+        const sym = encodeURIComponent(symbol);
+        // Try both Yahoo load-balancers, each direct then proxied
+        const baseUrls = [
+            `https://query1.finance.yahoo.com/v8/finance/chart/${sym}${qs}`,
+            `https://query2.finance.yahoo.com/v8/finance/chart/${sym}${qs}`,
+        ];
+        const errors = [];
+        let json;
+        for (const baseUrl of baseUrls) {
+            const urls = [baseUrl, ...this.CORS_PROXIES.map(make => make(baseUrl))];
+            for (const url of urls) {
+                try {
+                    console.log(`[Yahoo] ${symbol} via ${url.substring(0, 55)}...`);
+                    const resp = await this._fetch(url, 15000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    json = await resp.json();
+                    break;
+                } catch (err) {
+                    errors.push(err.message);
+                }
+            }
+            if (json) break;
+        }
+        if (!json) throw new Error(`Yahoo failed for ${symbol}: ${errors.join(' | ')}`);
 
         const result = json?.chart?.result?.[0];
         if (!result || !result.timestamp) throw new Error('No chart data');
@@ -199,7 +218,7 @@ const DataStore = {
         const series = {
             sp500: {
                 label: 'S&P 500',
-                fn: () => this.fetchYahoo('^GSPC', '1985-01-01'),
+                fn: () => this.fetchYahoo('^GSPC', '1990-01-01'),
             },
             vix: {
                 label: 'VIX',
@@ -223,7 +242,7 @@ const DataStore = {
             },
             yieldCurve: {
                 label: 'Yield Curve',
-                fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y),
+                fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y, '1990-01-01'),
             },
             shiller: {
                 label: 'Shiller Earnings/CAPE',
