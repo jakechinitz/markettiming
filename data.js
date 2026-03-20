@@ -1,5 +1,5 @@
 // Data fetching, processing, and nowcasting module
-// Sources: Yahoo Finance (S&P 500, VIX), FRED CSV (economic data), Shiller/GitHub CSV (historical earnings/CAPE)
+// Sources: Yahoo Finance (S&P 500, VIX), FRED (economic data), Shiller/GitHub CSV (historical earnings/CAPE)
 const DataStore = {
     raw: {},
     processed: {},
@@ -43,12 +43,24 @@ const DataStore = {
         throw new Error(errors.join(' | '));
     },
 
-    // ─── FRED CSV fetcher (no API key needed) ────────────────────────
+    // ─── FRED fetcher (JSON API with key → CSV via proxy fallback) ──
 
-    _fredCsvUrl(seriesId, startDate) {
-        const params = new URLSearchParams({ id: seriesId });
-        if (startDate) params.set('cosd', startDate);
-        return `https://fred.stlouisfed.org/graph/fredgraph.csv?${params}`;
+    _getFredKeys() {
+        const keys = (CONFIG.FRED_API_KEYS || []).filter(k => k && !k.startsWith('__'));
+        try {
+            const urlKey = new URLSearchParams(window.location.search).get('fred_key');
+            if (urlKey && !keys.includes(urlKey)) keys.unshift(urlKey);
+        } catch (e) { /* ignore */ }
+        return keys;
+    },
+
+    _parseFredJson(json, seriesId) {
+        if (json.error_message) throw new Error(`FRED: ${json.error_message}`);
+        const obs = (json.observations || [])
+            .filter(o => o.value !== '.')
+            .map(o => ({ date: o.date, value: parseFloat(o.value) }));
+        if (obs.length === 0) throw new Error(`No data for ${seriesId}`);
+        return obs;
     },
 
     _parseFredCsv(csv, seriesId) {
@@ -67,24 +79,54 @@ const DataStore = {
     },
 
     async fetchFred(seriesId, startDate) {
-        const url = this._fredCsvUrl(seriesId, startDate);
-        console.log(`[FRED] Fetching ${seriesId} CSV...`);
-        const resp = await this._fetchWithProxies(url, 20000);
-        const csv = await resp.text();
-        const data = this._parseFredCsv(csv, seriesId);
-        console.log(`[FRED] ${seriesId}: ${data.length} observations`);
-        return data;
+        const errors = [];
+        const keys = this._getFredKeys();
+
+        // Strategy 1: FRED JSON API with API key (has CORS headers)
+        for (const key of keys) {
+            try {
+                const params = new URLSearchParams({
+                    series_id: seriesId, file_type: 'json', sort_order: 'asc', api_key: key,
+                });
+                if (startDate) params.set('observation_start', startDate);
+                const url = `${CONFIG.FRED_BASE_URL}?${params}`;
+                console.log(`[FRED] ${seriesId} via API (key ...${key.slice(-4)})`);
+                const resp = await this._fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return this._parseFredJson(await resp.json(), seriesId);
+            } catch (err) {
+                errors.push(`api(${key.slice(-4)}): ${err.message}`);
+            }
+        }
+
+        // Strategy 2: FRED CSV endpoint via CORS proxy (no key needed)
+        const csvParams = new URLSearchParams({ id: seriesId });
+        if (startDate) csvParams.set('cosd', startDate);
+        const csvUrl = `https://fred.stlouisfed.org/graph/fredgraph.csv?${csvParams}`;
+        for (const makeProxy of this.CORS_PROXIES) {
+            try {
+                const proxied = makeProxy(csvUrl);
+                console.log(`[FRED] ${seriesId} via CSV proxy`);
+                const resp = await this._fetch(proxied, 20000);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return this._parseFredCsv(await resp.text(), seriesId);
+            } catch (err) {
+                errors.push(`csv-proxy: ${err.message}`);
+            }
+        }
+
+        throw new Error(`FRED failed for ${seriesId}: ${errors.join(' | ')}`);
     },
 
     // ─── Yahoo Finance fetcher (v8 chart — no crumb needed) ─────────
 
     async fetchYahoo(symbol, startDate) {
-        const period1 = startDate ? Math.floor(new Date(startDate).getTime() / 1000) : 0;
+        const period1 = Math.floor(new Date(startDate).getTime() / 1000);
         const period2 = Math.floor(Date.now() / 1000);
         const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
             + `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
 
-        console.log(`[Yahoo] Fetching ${symbol}...`);
+        console.log(`[Yahoo] Fetching ${symbol} from ${startDate}...`);
         const resp = await this._fetchWithProxies(yahooUrl, 15000);
         const json = await resp.json();
 
@@ -157,11 +199,11 @@ const DataStore = {
         const series = {
             sp500: {
                 label: 'S&P 500',
-                fn: () => this.fetchYahoo('^GSPC'),
+                fn: () => this.fetchYahoo('^GSPC', '1985-01-01'),
             },
             vix: {
                 label: 'VIX',
-                fn: () => this.fetchYahoo('^VIX'),
+                fn: () => this.fetchYahoo('^VIX', '1990-01-01'),
             },
             unemployment: {
                 label: 'Unemployment',

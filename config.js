@@ -1,6 +1,13 @@
 // Configuration and series definitions
 const CONFIG = {
-    // FRED series IDs (fetched via CSV endpoint — no API key needed)
+    // FRED API — keys are injected at build time; CSV fallback needs no key
+    FRED_BASE_URL: 'https://api.stlouisfed.org/fred/series/observations',
+    FRED_API_KEYS: [
+        '__FRED_API_KEY_1__',
+        '__FRED_API_KEY_2__',
+    ],
+
+    // FRED series IDs
     SERIES: {
         SP500: 'SP500',
         UNRATE: 'UNRATE',
