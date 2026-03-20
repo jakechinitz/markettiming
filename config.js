@@ -58,8 +58,9 @@ const CONFIG = {
         CAPE_HIGH: 30,
         PIE_LOW: 0.45,
         PIE_HIGH: 0.70,
-        ALLOC_LOW: 35,
-        ALLOC_HIGH: 45,
+        ALLOC_BEARISH_STDDEV: 2,   // above +2σ → bearish (-1)
+        ALLOC_NEUTRAL_STDDEV: 1,   // between ±1σ → neutral (0), 1σ-2σ either side still neutral
+        ALLOC_BULLISH_STDDEV: -1,  // below -1σ → bullish (+1)
         UNEMPLOYMENT_MA_MONTHS: 12,
         SP500_MA_DAYS: 200,
         YIELD_CURVE_INVERSION: 0, // spread below 0 = inverted = bearish
