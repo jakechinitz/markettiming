@@ -2,7 +2,19 @@
 const Strategy = {
     controlsInitialized: false,
 
+    // Put hedge parameters
+    PUT_HEDGE: {
+        STRIKE_OTM: 0.175,      // 17.5% out of the money (midpoint of 15-20%)
+        TENOR_MONTHS: 6,        // 6-month puts
+        PREMIUM_PCT: 0.03,      // spend 3% of portfolio on put premium
+    },
+
     ADVANCED_TOGGLES: [
+        {
+            id: 'put_hedge',
+            label: 'Crisis put hedge',
+            description: 'In Crisis regime (score ≤ -3 + below 200d MA), buy 6-month puts at ~17.5% OTM using 3% of portfolio. Sell when in-the-money. Cost modeled via Black-Scholes using VIX.',
+        },
         {
             id: 'vix_crisis_cap',
             label: 'VIX crisis cap',
@@ -19,6 +31,44 @@ const Strategy = {
             description: 'Cap to 60% equity when both CAPE and P/IE are in expensive territory simultaneously.',
         },
     ],
+
+    // ─── Black-Scholes put pricing ─────────────────────────────────────
+
+    // Cumulative normal distribution (Abramowitz & Stegun approximation)
+    normalCDF(x) {
+        const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+        const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+        const sign = x < 0 ? -1 : 1;
+        x = Math.abs(x) / Math.sqrt(2);
+        const t = 1.0 / (1.0 + p * x);
+        const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+        return 0.5 * (1.0 + sign * y);
+    },
+
+    // Black-Scholes put price (assumes r=0 for simplicity)
+    // Returns price as fraction of spot (e.g., 0.019 = 1.9% of spot)
+    bsPutPrice(spot, strike, T, sigma) {
+        if (T <= 0 || sigma <= 0) return Math.max(0, strike - spot) / spot;
+        const d1 = (Math.log(spot / strike) + 0.5 * sigma * sigma * T) / (sigma * Math.sqrt(T));
+        const d2 = d1 - sigma * Math.sqrt(T);
+        const putPrice = strike * this.normalCDF(-d2) - spot * this.normalCDF(-d1);
+        return putPrice / spot; // as fraction of spot
+    },
+
+    // Estimate implied vol for put pricing: use VIX if available, else realized vol, with crisis floor
+    getImpliedVol(dateStr) {
+        // VIX is the best proxy for implied vol
+        const vix = DataStore.getLaggedValue('vix', dateStr, 0);
+        if (vix && vix.value > 0) {
+            // When buying puts in a crisis, actual skew makes OTM puts ~20-30% more expensive
+            // than ATM implied vol (VIX). Apply a skew premium.
+            return (vix.value / 100) * 1.25;
+        }
+        // Fallback: 3-month realized vol with crisis premium
+        const rv = this.getRealizedVolAtDate(dateStr);
+        if (rv !== null) return (rv / 100) * 1.4; // bigger premium when no VIX
+        return 0.30; // conservative default
+    },
 
     getActiveToggles() {
         const active = {};
@@ -51,18 +101,23 @@ const Strategy = {
     },
 
     // Core allocation model:
-    //   Composite > 0              → 100% equity (bullish)
-    //   Composite ≤ 0, above 200d  →  80% equity (cautious, but trend intact)
-    //   Composite ≤ 0, below 200d  →  60% equity (de-risk: bearish + broken trend)
+    //   Composite > 0                       → 100% equity (bullish)
+    //   Composite ≤ 0, above 200d           →  80% equity (cautious, trend intact)
+    //   Composite ≤ 0, below 200d           →  60% equity (defensive, broken trend)
+    //   Composite ≤ -3, below 200d          →  40% equity (crisis: deeply bearish + broken trend)
     scoreToAllocation(score, trend) {
         if (score > 0) return 1.0;
         // Score ≤ 0: only go below 80% if price is below 200-day MA
-        if (trend === -1) return 0.6;
+        if (trend === -1) {
+            if (score <= -3) return 0.4;
+            return 0.6;
+        }
         return 0.8;
     },
 
     scoreToRegime(score, trend) {
         if (score > 0) return 'Bullish';
+        if (trend === -1 && score <= -3) return 'Crisis';
         if (trend === -1) return 'Defensive';
         return 'Cautious';
     },
@@ -214,6 +269,19 @@ const Strategy = {
         signals.equityPct = Math.round(adjusted.alloc * 100);
         signals.adjustmentNotes = adjusted.notes;
         signals.realizedVol = realizedVol;
+
+        // Put hedge recommendation for current signals
+        const toggles = this.getActiveToggles();
+        if (toggles.put_hedge && signals.composite <= -3 && trendSignal === -1) {
+            const vol = sp ? this.getImpliedVol(sp.date) : 0.35;
+            const strike = sp ? sp.value * (1 - this.PUT_HEDGE.STRIKE_OTM) : 0;
+            const putCost = this.bsPutPrice(1, 1 - this.PUT_HEDGE.STRIKE_OTM, this.PUT_HEDGE.TENOR_MONTHS / 12, vol);
+            signals.adjustmentNotes.push(
+                `Crisis put hedge: buy 6mo puts at ~${strike.toFixed(0)} strike (${(this.PUT_HEDGE.STRIKE_OTM * 100).toFixed(1)}% OTM), ` +
+                `est. cost ${(putCost * 100).toFixed(1)}% of notional (vol ${(vol * 100).toFixed(0)}%), ` +
+                `allocate ${(this.PUT_HEDGE.PREMIUM_PCT * 100).toFixed(0)}% of portfolio`
+            );
+        }
 
         return signals;
     },
@@ -436,6 +504,9 @@ const Strategy = {
         const strategyLine = [];
         const buyHoldLine = [];
 
+        // Active put hedge state (for put_hedge toggle)
+        let activePut = null; // { entryMonth, strike, entryPrice, numPuts, premiumSpent, expiryMonth }
+
         for (let i = 1; i < monthly.length; i++) {
             const prevPrice = monthly[i - 1].value;
             const currPrice = monthly[i].value;
@@ -449,6 +520,54 @@ const Strategy = {
 
             strategyValue *= (1 + ret * adjusted.alloc);
             buyHoldValue *= (1 + ret);
+
+            // ─── Put hedge logic ─────────────────────────────────────
+            if (toggles.put_hedge) {
+                const isCrisis = lagged.score <= -3 && trendSignal === -1;
+
+                // Check if active put should be settled
+                if (activePut) {
+                    const monthsHeld = i - activePut.entryMonth;
+                    const intrinsic = Math.max(0, activePut.strike - currPrice) * activePut.numPuts;
+                    const isExpired = monthsHeld >= this.PUT_HEDGE.TENOR_MONTHS;
+                    // Sell when ITM (puts "print") or at expiry
+                    const isITM = currPrice < activePut.strike;
+
+                    if (isITM || isExpired) {
+                        if (isITM) {
+                            // Reprice with remaining time value using BS
+                            const remainingT = Math.max(0, this.PUT_HEDGE.TENOR_MONTHS - monthsHeld) / 12;
+                            const vol = this.getImpliedVol(monthly[i].date);
+                            const putVal = this.bsPutPrice(currPrice, activePut.strike, remainingT, vol) * currPrice;
+                            const totalValue = putVal * activePut.numPuts;
+                            strategyValue += totalValue;
+                        }
+                        // else: expired OTM, worthless — premium already deducted
+                        activePut = null;
+                    }
+                }
+
+                // Buy new puts if in crisis and no active position
+                if (isCrisis && !activePut) {
+                    const premium = strategyValue * this.PUT_HEDGE.PREMIUM_PCT;
+                    const strike = currPrice * (1 - this.PUT_HEDGE.STRIKE_OTM);
+                    const vol = this.getImpliedVol(monthly[i].date);
+                    const putCostPerUnit = this.bsPutPrice(currPrice, strike, this.PUT_HEDGE.TENOR_MONTHS / 12, vol) * currPrice;
+
+                    if (putCostPerUnit > 0) {
+                        const numPuts = premium / putCostPerUnit;
+                        strategyValue -= premium; // pay the premium
+                        activePut = {
+                            entryMonth: i,
+                            entryPrice: currPrice,
+                            strike,
+                            numPuts,
+                            premiumSpent: premium,
+                            expiryMonth: i + this.PUT_HEDGE.TENOR_MONTHS,
+                        };
+                    }
+                }
+            }
 
             strategyLine.push({ date: monthly[i].date, value: strategyValue });
             buyHoldLine.push({ date: monthly[i].date, value: buyHoldValue });
