@@ -198,6 +198,7 @@
                                 <tr><td>Composite &gt; 0</td><td class="signal-bullish">Bullish</td><td>100%</td></tr>
                                 <tr><td>Composite ≤ 0, above 200d MA</td><td class="signal-neutral">Cautious</td><td>80%</td></tr>
                                 <tr><td>Composite ≤ 0, below 200d MA</td><td class="signal-bearish">Defensive</td><td>60%</td></tr>
+                                <tr><td>Composite ≤ -3, below 200d MA</td><td class="signal-bearish">Crisis</td><td>40%</td></tr>
                             </tbody>
                         </table>
                         <p class="lag-note">The 200-day moving average acts as a trend gate: the model only de-risks below 80% when both the composite score is non-positive and the market's trend is broken.</p>
@@ -207,6 +208,7 @@
                 <details class="advanced-options" id="strategy-advanced-options">
                     <summary>Advanced strategy toggles (optional)</summary>
                     <div class="advanced-options-grid">
+                        <label class="toggle-item"><input type="checkbox" id="put_hedge"> <span><strong>Crisis put hedge</strong><br>In Crisis regime (score ≤ -3 + below 200d MA), buy 6-month puts at ~17.5% OTM using 3% of portfolio. Cost modeled via Black-Scholes with VIX-implied vol + 25% skew premium. Sell when ITM.</span></label>
                         <label class="toggle-item"><input type="checkbox" id="vix_crisis_cap"> <span><strong>VIX crisis cap</strong><br>Cap equity at 40% when VIX > 30.</span></label>
                         <label class="toggle-item"><input type="checkbox" id="realized_vol_cap"> <span><strong>Realized volatility cap</strong><br>Use 3m annualized realized vol; cap at 60% if >25%, 40% if >35%.</span></label>
                         <label class="toggle-item"><input type="checkbox" id="valuation_double_cap"> <span><strong>Valuation double-red cap</strong><br>Cap at 60% when CAPE and P/IE are both expensive.</span></label>
