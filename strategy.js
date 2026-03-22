@@ -271,7 +271,6 @@ const Strategy = {
         signals.realizedVol = realizedVol;
 
         // Put hedge recommendation for current signals
-        const toggles = this.getActiveToggles();
         if (toggles.put_hedge && signals.composite <= -3 && trendSignal === -1) {
             const vol = sp ? this.getImpliedVol(sp.date) : 0.35;
             const strike = sp ? sp.value * (1 - this.PUT_HEDGE.STRIKE_OTM) : 0;
