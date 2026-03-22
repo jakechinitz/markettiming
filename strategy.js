@@ -4,11 +4,6 @@ const Strategy = {
 
     ADVANCED_TOGGLES: [
         {
-            id: 'trend_gate_degross',
-            label: 'Trend gate de-grossing',
-            description: 'Only cut below 80% equity when both composite < +1 and S&P is below its 200-day MA.',
-        },
-        {
             id: 'vix_crisis_cap',
             label: 'VIX crisis cap',
             description: 'Cap to 40% equity when VIX is above 30 (risk-off shock regime).',
@@ -55,20 +50,21 @@ const Strategy = {
         return 0;
     },
 
-    scoreToAllocation(score) {
-        if (score >= 6) return 1.0;
-        if (score >= 4) return 0.8;
-        if (score >= 1) return 0.6;
-        if (score >= -2) return 0.4;
-        return 0.2;
+    // Core allocation model:
+    //   Composite > 0              → 100% equity (bullish)
+    //   Composite ≤ 0, above 200d  →  80% equity (cautious, but trend intact)
+    //   Composite ≤ 0, below 200d  →  60% equity (de-risk: bearish + broken trend)
+    scoreToAllocation(score, trend) {
+        if (score > 0) return 1.0;
+        // Score ≤ 0: only go below 80% if price is below 200-day MA
+        if (trend === -1) return 0.6;
+        return 0.8;
     },
 
-    scoreToRegime(score) {
-        if (score >= 6) return 'Strong Buy';
-        if (score >= 4) return 'Buy';
-        if (score >= 1) return 'Neutral';
-        if (score >= -2) return 'Reduce';
-        return 'Defensive';
+    scoreToRegime(score, trend) {
+        if (score > 0) return 'Bullish';
+        if (trend === -1) return 'Defensive';
+        return 'Cautious';
     },
 
     getRealizedVolAtDate(dateStr, monthsLookback = 3) {
@@ -96,14 +92,6 @@ const Strategy = {
     applyAdvancedAllocation(baseAlloc, context, toggles) {
         let alloc = baseAlloc;
         const notes = [];
-
-        if (toggles.trend_gate_degross && alloc < 0.8) {
-            const allowDegross = context.score < 1 && context.trend === -1;
-            if (!allowDegross) {
-                alloc = 0.8;
-                notes.push('Trend gate kept allocation at 80% floor');
-            }
-        }
 
         if (toggles.vix_crisis_cap && context.vixValue !== null && context.vixValue > CONFIG.STRATEGY.VIX_HIGH) {
             if (alloc > 0.4) {
@@ -207,12 +195,13 @@ const Strategy = {
         signals.composite = validSignals.reduce((sum, c) => sum + signals[c], 0);
         signals.maxPossible = validSignals.length;
 
-        const baseAlloc = this.scoreToAllocation(signals.composite);
+        const trendSignal = signals.trend ?? 0;
+        const baseAlloc = this.scoreToAllocation(signals.composite, trendSignal);
         const toggles = this.getActiveToggles();
         const realizedVol = sp ? this.getRealizedVolAtDate(sp.date) : null;
         const context = {
             score: signals.composite,
-            trend: signals.trend,
+            trend: trendSignal,
             vixValue: signals.vixValue ?? null,
             realizedVol,
             capeSignal: signals.cape,
@@ -220,7 +209,7 @@ const Strategy = {
         };
         const adjusted = this.applyAdvancedAllocation(baseAlloc, context, toggles);
 
-        signals.regime = this.scoreToRegime(signals.composite);
+        signals.regime = this.scoreToRegime(signals.composite, trendSignal);
         signals.equityPctBase = Math.round(baseAlloc * 100);
         signals.equityPct = Math.round(adjusted.alloc * 100);
         signals.adjustmentNotes = adjusted.notes;
@@ -454,7 +443,8 @@ const Strategy = {
             const ret = (currPrice - prevPrice) / prevPrice;
 
             const lagged = this.computeLaggedScore(monthly[i - 1].date);
-            const baseAlloc = this.scoreToAllocation(lagged.score);
+            const trendSignal = lagged.context.trend ?? 0;
+            const baseAlloc = this.scoreToAllocation(lagged.score, trendSignal);
             const adjusted = this.applyAdvancedAllocation(baseAlloc, lagged.context, toggles);
 
             strategyValue *= (1 + ret * adjusted.alloc);
