@@ -12,7 +12,8 @@ const DataStore = {
         url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
     ],
 
-    // Shiller data (GitHub-hosted CSV, CORS-friendly, updated monthly, data from 1871)
+    // Shiller data sources (XLS is primary/authoritative, CSV is fallback)
+    SHILLER_XLS_URL: 'http://www.econ.yale.edu/~shiller/data/ie_data.xls',
     SHILLER_CSV_URL: 'https://raw.githubusercontent.com/datasets/s-and-p-500/main/data/data.csv',
 
     // ─── Low-level fetchers ──────────────────────────────────────────
@@ -171,20 +172,123 @@ const DataStore = {
         return data;
     },
 
-    // ─── Shiller data fetcher (GitHub CSV, CORS-friendly) ───────────
+    // ─── Shiller data fetcher (XLS primary, CSV fallback) ───────────
     // Returns [{date, sp500, dividend, earnings, cape, cpi}, ...]
 
     async fetchShillerData() {
+        // Try Yale XLS first (most authoritative, updated monthly by Shiller)
+        if (typeof XLSX !== 'undefined') {
+            try {
+                const data = await this._fetchShillerXLS();
+                if (data.length >= 100) {
+                    console.log(`[Shiller] XLS: ${data.length} months (${data[0].date} → ${data[data.length-1].date})`);
+                    return data;
+                }
+                console.warn(`[Shiller] XLS only ${data.length} rows, falling back to CSV`);
+            } catch (err) {
+                console.warn(`[Shiller] XLS failed (${err.message}), falling back to CSV`);
+            }
+        } else {
+            console.warn('[Shiller] XLSX library not loaded, using CSV only');
+        }
+
+        // Fallback: GitHub CSV
         console.log('[Shiller] Fetching GitHub CSV...');
         const resp = await this._fetchWithProxies(this.SHILLER_CSV_URL, 20000);
         const csv = await resp.text();
         const data = this._parseShillerCSV(csv);
         if (data.length < 100) throw new Error(`Only ${data.length} rows`);
-        console.log(`[Shiller] ${data.length} months (${data[0].date} → ${data[data.length-1].date})`);
+        console.log(`[Shiller] CSV: ${data.length} months (${data[0].date} → ${data[data.length-1].date})`);
         return data;
     },
 
-    // Parse GitHub CSV (datasets/s-and-p-500 format)
+    // Fetch and parse Shiller's original XLS from Yale
+    async _fetchShillerXLS() {
+        console.log('[Shiller] Fetching Yale XLS...');
+        const resp = await this._fetchWithProxies(this.SHILLER_XLS_URL, 30000);
+        const buf = await resp.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(buf), { type: 'array' });
+        const sheet = workbook.Sheets['Data'];
+        if (!sheet) throw new Error('No "Data" sheet found');
+        return this._parseShillerSheet(sheet);
+    },
+
+    // Parse the "Data" sheet from Shiller's XLS
+    // Date is decimal (1871.01 = Jan 1871), header at row 8, data starts row 9
+    _parseShillerSheet(sheet) {
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+        const data = [];
+
+        // Find header row — look for a row containing "Date" and "Price" or "S&P" or "P"
+        let headerIdx = -1;
+        for (let i = 0; i < Math.min(rows.length, 15); i++) {
+            const row = rows[i];
+            if (!row) continue;
+            const first = String(row[0] || '').toLowerCase();
+            if (first === 'date' || first.includes('date')) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) headerIdx = 7; // Default per Shiller's standard format
+
+        // Map column headers to indices
+        const header = (rows[headerIdx] || []).map(h => String(h || '').trim().toLowerCase());
+        const colMap = {};
+        for (let c = 0; c < header.length; c++) {
+            const h = header[c];
+            if (h === 'date' && colMap.date === undefined) colMap.date = c;
+            else if ((h === 'p' || h === 's&p comp.' || h.includes('s&p')) && colMap.sp500 === undefined) colMap.sp500 = c;
+            else if ((h === 'd' || h === 'dividend') && colMap.dividend === undefined) colMap.dividend = c;
+            else if ((h === 'e' || h === 'earnings') && colMap.earnings === undefined) colMap.earnings = c;
+            else if (h === 'cpi' && colMap.cpi === undefined) colMap.cpi = c;
+            else if ((h === 'cape' || h === 'pe10') && colMap.cape === undefined) colMap.cape = c;
+        }
+
+        // Fallback to positional if header detection failed
+        if (colMap.date === undefined) colMap.date = 0;
+        if (colMap.sp500 === undefined) colMap.sp500 = 1;
+        if (colMap.dividend === undefined) colMap.dividend = 2;
+        if (colMap.earnings === undefined) colMap.earnings = 3;
+        if (colMap.cpi === undefined) colMap.cpi = 4;
+        if (colMap.cape === undefined) colMap.cape = 12; // Column M in standard Shiller format
+
+        for (let i = headerIdx + 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row || row.length < 5) continue;
+
+            // Parse decimal date (e.g., 2024.01 = Jan 2024, 2024.1 = Oct 2024)
+            const rawDate = row[colMap.date];
+            if (rawDate == null || rawDate === '') continue;
+            const dateNum = parseFloat(rawDate);
+            if (isNaN(dateNum) || dateNum < 1800 || dateNum > 2100) continue;
+
+            const year = Math.floor(dateNum);
+            const monthFrac = Math.round((dateNum - year) * 100);
+            const month = monthFrac >= 1 && monthFrac <= 12 ? monthFrac : 1;
+            const date = `${year}-${String(month).padStart(2, '0')}-01`;
+
+            const sp500 = parseFloat(row[colMap.sp500]);
+            const dividend = parseFloat(row[colMap.dividend]);
+            const earnings = parseFloat(row[colMap.earnings]);
+            const cpi = parseFloat(row[colMap.cpi]);
+            const cape = parseFloat(row[colMap.cape]);
+
+            if (isNaN(sp500) && isNaN(earnings)) continue;
+
+            data.push({
+                date,
+                sp500: isNaN(sp500) ? null : sp500,
+                dividend: (isNaN(dividend) || dividend <= 0) ? null : dividend,
+                earnings: (isNaN(earnings) || earnings <= 0) ? null : earnings,
+                cape: (isNaN(cape) || cape <= 0) ? null : cape,
+                cpi: (isNaN(cpi) || cpi <= 0) ? null : cpi,
+            });
+        }
+        return data;
+    },
+
+    // Parse GitHub CSV (datasets/s-and-p-500 format) — fallback
     // Columns: Date,SP500,Dividend,Earnings,Consumer Price Index,Long Interest Rate,Real Price,Real Dividend,Real Earnings,PE10
     _parseShillerCSV(csv) {
         const lines = csv.trim().split('\n');
