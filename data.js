@@ -642,8 +642,15 @@ const DataStore = {
             if (d.cape && d.cape > 0) shillerCapeByMonth[d.date.substring(0, 7)] = d.cape;
         });
 
-        const confirmedShillerMonths = Object.keys(shillerCapeByMonth).sort();
-        const lastConfirmedMonth = confirmedShillerMonths.length > 0 ? confirmedShillerMonths[confirmedShillerMonths.length - 1] : null;
+        // Nowcast cutoff: based on last month with actual Shiller earnings data,
+        // not Shiller's pre-computed CAPE. If we have real earnings, we can compute
+        // a real CAPE — no need to mark it as nowcast.
+        const confirmedEarningsMonths = shiller
+            .filter(d => d.earnings && d.earnings > 0)
+            .map(d => d.date.substring(0, 7))
+            .sort();
+        const lastConfirmedMonth = confirmedEarningsMonths.length > 0
+            ? confirmedEarningsMonths[confirmedEarningsMonths.length - 1] : null;
         const latestKnownCPI = Object.values(cpiByMonth).filter(v => v > 0).slice(-1)[0] || null;
         const cape = [];
 
@@ -688,7 +695,8 @@ const DataStore = {
 
         if (shiller.length > 0) {
             const pe = [];
-            const lastEntry = shiller[shiller.length - 1];
+            // Use last entry with actual earnings (not a row with zeros from stale CSV)
+            const lastEntry = [...shiller].reverse().find(d => d.earnings > 0) || shiller[shiller.length - 1];
 
             for (const d of shiller) {
                 if (d.earnings > 0 && d.sp500 > 0) {
@@ -810,8 +818,12 @@ const DataStore = {
         }
 
         const pie = [];
-        const shillerMonths = new Set(shiller.map(d => d.date.substring(0, 7)));
-        const confirmedCutoff = [...shillerMonths].sort().slice(-1)[0] || null;
+        // Nowcast cutoff: last month with actual Shiller earnings (not just any row)
+        const confirmedEarningsMonths = shiller
+            .filter(d => d.earnings && d.earnings > 0)
+            .map(d => d.date.substring(0, 7));
+        const confirmedCutoff = confirmedEarningsMonths.length > 0
+            ? confirmedEarningsMonths.sort().slice(-1)[0] : null;
 
         for (const sp of monthlySP) {
             const monthKey = sp.date.substring(0, 7);
