@@ -18,7 +18,7 @@ const Strategy = {
         {
             id: 'vix_crisis_cap',
             label: 'VIX crisis cap',
-            description: 'Cap to 40% equity when VIX is above 30 (risk-off shock regime).',
+            description: 'Cap to 40% equity when VIX z-score ≥ +2σ on 5-year rolling window (risk-off shock regime).',
         },
         {
             id: 'realized_vol_cap',
@@ -94,10 +94,14 @@ const Strategy = {
         this.controlsInitialized = true;
     },
 
-    classifyValuation(value, low, high) {
-        if (value < low) return 1;
-        if (value > high) return -1;
-        return 0;
+    // Classify using z-score: above +Nσ → bearish, below -Nσ → bullish
+    classifyByZScore(value, stats) {
+        if (!stats || stats.stddev === 0) return { signal: 0, z: 0 };
+        const z = (value - stats.mean) / stats.stddev;
+        let signal = 0;
+        if (z >= CONFIG.STRATEGY.STDDEV_BEARISH) signal = -1;
+        else if (z <= CONFIG.STRATEGY.STDDEV_BULLISH) signal = 1;
+        return { signal, z };
     },
 
     // Core allocation model:
@@ -148,10 +152,10 @@ const Strategy = {
         let alloc = baseAlloc;
         const notes = [];
 
-        if (toggles.vix_crisis_cap && context.vixValue !== null && context.vixValue > CONFIG.STRATEGY.VIX_HIGH) {
+        if (toggles.vix_crisis_cap && context.vixZ !== null && context.vixZ >= CONFIG.STRATEGY.VIX_CRISIS_STDDEV) {
             if (alloc > 0.4) {
                 alloc = 0.4;
-                notes.push(`VIX crisis cap applied (${context.vixValue.toFixed(1)})`);
+                notes.push(`VIX crisis cap applied (z=${context.vixZ.toFixed(2)}, VIX ${context.vixValue.toFixed(1)})`);
             }
         }
 
@@ -197,39 +201,57 @@ const Strategy = {
             signals.unemploymentNowcast = !!unemp.nowcast;
         }
 
-        // 3. Volatility regime (real-time, no lag)
+        // 3. Volatility regime (real-time, 5-year rolling z-score)
         const vix = DataStore.getLatest('vix');
         if (vix) {
-            if (vix.value < CONFIG.STRATEGY.VIX_LOW) signals.vix = 1;
-            else if (vix.value > CONFIG.STRATEGY.VIX_HIGH) signals.vix = -1;
-            else signals.vix = 0;
-            signals.vixDetail = `VIX at ${vix.value.toFixed(1)}`;
+            const vixStats = DataStore.getSeriesStatsAsOf('vix', vix.date, CONFIG.STRATEGY.VIX_ROLLING_MONTHS);
+            if (vixStats) {
+                const { signal, z } = this.classifyByZScore(vix.value, vixStats);
+                signals.vix = signal;
+                signals.vixDetail = `VIX ${vix.value.toFixed(1)} (z=${z.toFixed(2)}, μ=${vixStats.mean.toFixed(1)}, σ=${vixStats.stddev.toFixed(1)})`;
+                signals.vixZ = z;
+            } else {
+                signals.vix = 0;
+                signals.vixDetail = `VIX at ${vix.value.toFixed(1)} (no stats)`;
+            }
             signals.vixValue = vix.value;
         }
 
-        // 4. Valuation (CAPE)
+        // 4. Valuation (CAPE) — full-history z-score
         const cape = DataStore.getLatest('cape');
         if (cape) {
-            signals.cape = this.classifyValuation(cape.value, CONFIG.STRATEGY.CAPE_LOW, CONFIG.STRATEGY.CAPE_HIGH);
-            signals.capeDetail = `CAPE at ${cape.value.toFixed(1)}`;
+            const capeStats = DataStore.getSeriesStats('cape');
+            if (capeStats) {
+                const { signal, z } = this.classifyByZScore(cape.value, capeStats);
+                signals.cape = signal;
+                signals.capeDetail = `CAPE ${cape.value.toFixed(1)} (z=${z.toFixed(2)}, μ=${capeStats.mean.toFixed(1)}, σ=${capeStats.stddev.toFixed(1)})`;
+            } else {
+                signals.cape = 0;
+                signals.capeDetail = `CAPE at ${cape.value.toFixed(1)} (no stats)`;
+            }
         }
 
-        // 5. Valuation (P/IE)
+        // 5. Valuation (P/IE) — full-history z-score
         const pie = DataStore.getLatest('pie');
         if (pie) {
-            signals.pie = this.classifyValuation(pie.value, CONFIG.STRATEGY.PIE_LOW, CONFIG.STRATEGY.PIE_HIGH);
-            signals.pieDetail = `P/IE at ${pie.value.toFixed(2)}`;
+            const pieStats = DataStore.getSeriesStats('pie');
+            if (pieStats) {
+                const { signal, z } = this.classifyByZScore(pie.value, pieStats);
+                signals.pie = signal;
+                signals.pieDetail = `P/IE ${pie.value.toFixed(2)} (z=${z.toFixed(2)}, μ=${pieStats.mean.toFixed(2)}, σ=${pieStats.stddev.toFixed(2)})`;
+            } else {
+                signals.pie = 0;
+                signals.pieDetail = `P/IE at ${pie.value.toFixed(2)} (no stats)`;
+            }
         }
 
-        // 6. Investor allocation (uses nowcast, stddev-based thresholds)
+        // 6. Investor allocation (uses nowcast, full-history z-score)
         const alloc = DataStore.getLatest('equityAlloc');
         if (alloc) {
             const allocStats = DataStore.getSeriesStats('equityAlloc');
             if (allocStats) {
-                const z = (alloc.value - allocStats.mean) / allocStats.stddev;
-                if (z >= CONFIG.STRATEGY.ALLOC_BEARISH_STDDEV) signals.allocation = -1;
-                else if (z <= CONFIG.STRATEGY.ALLOC_BULLISH_STDDEV) signals.allocation = 1;
-                else signals.allocation = 0;
+                const { signal, z } = this.classifyByZScore(alloc.value, allocStats);
+                signals.allocation = signal;
                 signals.allocationDetail = `Allocation ${alloc.value.toFixed(1)}% (z=${z.toFixed(2)}, μ=${allocStats.mean.toFixed(1)}%, σ=${allocStats.stddev.toFixed(1)}%)`;
             } else {
                 signals.allocation = 0;
@@ -258,6 +280,7 @@ const Strategy = {
             score: signals.composite,
             trend: trendSignal,
             vixValue: signals.vixValue ?? null,
+            vixZ: signals.vixZ ?? null,
             realizedVol,
             capeSignal: signals.cape,
             pieSignal: signals.pie,
@@ -345,9 +368,15 @@ const Strategy = {
     // Compute a single signal score at a given date using lagged data
     // This is what an investor would have actually known at `dateStr`
     computeLaggedScore(dateStr) {
-        // Cache allocation stats (computed once)
-        if (!this._allocStats) {
-            this._allocStats = DataStore.getSeriesStats('equityAlloc');
+        // Cache stats (computed once per backtest run)
+        if (!this._backtestStats) {
+            this._backtestStats = {
+                alloc: DataStore.getSeriesStats('equityAlloc'),
+                cape: DataStore.getSeriesStats('cape'),
+                pie: DataStore.getSeriesStats('pie'),
+                // Pre-build rolling VIX stats lookup for efficiency
+                vixRolling: DataStore.buildRollingStatsLookup('vix', CONFIG.STRATEGY.VIX_ROLLING_MONTHS),
+            };
         }
         let score = 0;
         let count = 0;
@@ -356,6 +385,7 @@ const Strategy = {
             score: 0,
             trend: undefined,
             vixValue: null,
+            vixZ: null,
             realizedVol: this.getRealizedVolAtDate(dateStr),
             capeSignal: undefined,
             pieSignal: undefined,
@@ -377,40 +407,44 @@ const Strategy = {
             count++;
         }
 
-        // 3. VIX (0 month lag — real-time)
+        // 3. VIX (0 month lag — 5-year rolling z-score)
         const vix = DataStore.getLaggedValue('vix', dateStr, CONFIG.PUB_LAG.VIX);
         if (vix) {
-            if (vix.value < CONFIG.STRATEGY.VIX_LOW) score += 1;
-            else if (vix.value > CONFIG.STRATEGY.VIX_HIGH) score -= 1;
+            const vixMonth = vix.date.substring(0, 7);
+            const vixStats = this._backtestStats.vixRolling[vixMonth];
+            if (vixStats) {
+                const { signal, z } = this.classifyByZScore(vix.value, vixStats);
+                score += signal;
+                context.vixZ = z;
+            }
             context.vixValue = vix.value;
             count++;
         }
 
-        // 4. CAPE (2 month lag — depends on CPI)
+        // 4. CAPE (2 month lag — full-history z-score)
         const cape = DataStore.getLaggedValue('cape', dateStr, CONFIG.PUB_LAG.CAPE);
-        if (cape) {
-            const s = this.classifyValuation(cape.value, CONFIG.STRATEGY.CAPE_LOW, CONFIG.STRATEGY.CAPE_HIGH);
-            score += s;
-            context.capeSignal = s;
+        if (cape && this._backtestStats.cape) {
+            const { signal } = this.classifyByZScore(cape.value, this._backtestStats.cape);
+            score += signal;
+            context.capeSignal = signal;
             count++;
         }
 
-        // 5. P/IE (2 month lag)
+        // 5. P/IE (2 month lag — full-history z-score)
         const pieLag = CONFIG.PUB_LAG.PIE ?? CONFIG.PUB_LAG.CAPE;
         const pie = DataStore.getLaggedValue('pie', dateStr, pieLag);
-        if (pie) {
-            const s = this.classifyValuation(pie.value, CONFIG.STRATEGY.PIE_LOW, CONFIG.STRATEGY.PIE_HIGH);
-            score += s;
-            context.pieSignal = s;
+        if (pie && this._backtestStats.pie) {
+            const { signal } = this.classifyByZScore(pie.value, this._backtestStats.pie);
+            score += signal;
+            context.pieSignal = signal;
             count++;
         }
 
-        // 6. Equity allocation (1 month lag — nowcasted, stddev-based)
+        // 6. Equity allocation (1 month lag — full-history z-score)
         const alloc = DataStore.getLaggedValue('equityAlloc', dateStr, CONFIG.PUB_LAG.EQUITY_ALLOC);
-        if (alloc && this._allocStats) {
-            const z = (alloc.value - this._allocStats.mean) / this._allocStats.stddev;
-            if (z >= CONFIG.STRATEGY.ALLOC_BEARISH_STDDEV) score -= 1;
-            else if (z <= CONFIG.STRATEGY.ALLOC_BULLISH_STDDEV) score += 1;
+        if (alloc && this._backtestStats.alloc) {
+            const { signal } = this.classifyByZScore(alloc.value, this._backtestStats.alloc);
+            score += signal;
             count++;
         }
 
@@ -426,6 +460,7 @@ const Strategy = {
     },
 
     renderStrategyChart() {
+        this._backtestStats = null; // clear cache so stats recompute fresh
         const sp = DataStore.processed.sp500;
         if (!sp || sp.length === 0) return;
 

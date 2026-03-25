@@ -50,17 +50,14 @@ const CONFIG = {
         gridLineLight: 'rgba(45, 48, 72, 0.3)',
     },
 
-    // Strategy thresholds
+    // Strategy thresholds — all z-score based (standard deviations from mean)
     STRATEGY: {
-        VIX_LOW: 20,
-        VIX_HIGH: 30,
-        CAPE_LOW: 15,
-        CAPE_HIGH: 25,
-        PIE_LOW: 0.45,
-        PIE_HIGH: 0.70,
-        ALLOC_BEARISH_STDDEV: 1,   // above +1σ → bearish (-1)
-        ALLOC_NEUTRAL_STDDEV: 1,   // between ±1σ → neutral (0), 1σ-2σ either side still neutral
-        ALLOC_BULLISH_STDDEV: -1,  // below -1σ → bullish (+1)
+        // Unified z-score thresholds: above +1σ → bearish, below -1σ → bullish
+        STDDEV_BEARISH: 1,         // z ≥ +1σ → bearish (-1)
+        STDDEV_BULLISH: -1,        // z ≤ -1σ → bullish (+1)
+        // VIX uses a rolling window (regime-adaptive); CAPE/PIE/allocation use full history
+        VIX_ROLLING_MONTHS: 60,    // 5-year rolling window for VIX z-score
+        VIX_CRISIS_STDDEV: 2,      // z ≥ +2σ → crisis cap (for VIX crisis cap toggle)
         UNEMPLOYMENT_MA_MONTHS: 12,
         SP500_MA_DAYS: 200,
         YIELD_CURVE_INVERSION: 0, // spread below 0 = inverted = bearish

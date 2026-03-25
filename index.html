@@ -278,9 +278,9 @@
 
                 <div class="about-card">
                     <h3>2. Shiller CAPE Ratio</h3>
-                    <p>Robert Shiller's Cyclically Adjusted Price-to-Earnings ratio smooths earnings over 10 years to remove business cycle effects. It has historically mean-reverted around ~16-17. Data is sourced from the <a href="https://github.com/datasets/s-and-p-500" target="_blank">Shiller S&P 500 dataset</a>.</p>
+                    <p>Robert Shiller's Cyclically Adjusted Price-to-Earnings ratio smooths earnings over 10 years to remove business cycle effects. Data is sourced from <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Shiller's Yale dataset</a>.</p>
                     <p><strong>Formula:</strong> CAPE = Real S&P 500 Price / (10-year average of Real Trailing 12-Month Earnings)</p>
-                    <p><strong>Note:</strong> Uses actual reported S&P 500 earnings, not estimates. Recent months beyond the dataset are projected using trailing earnings growth rate.</p>
+                    <p><strong>Signal:</strong> Uses full-history z-score (standard deviations from historical mean). Above +1σ → bearish, below -1σ → bullish. This adapts to structural shifts rather than using fixed thresholds.</p>
                 </div>
 
                 <div class="about-card">
@@ -288,7 +288,7 @@
                     <p>Based on O'Shaughnessy Asset Management's <a href="https://osam.com/Commentary/the-earnings-mirage" target="_blank">"The Earnings Mirage"</a> research. Integrated Equity deconstructs book value into individual years of retained earnings, adjusts each for inflation using CPI, then sums them to produce a properly inflation-adjusted book value.</p>
                     <p><strong>Formula:</strong> P/IE = Price / Integrated Equity, where IE = Σ (retained_earnings_t × CPI_now / CPI_t) for all months t. Retained earnings = reported earnings − dividends.</p>
                     <p><strong>Key insight:</strong> GAAP book value understates true equity because depreciation is based on historical cost. This causes ROE to appear artificially high (~12%) when the real return on integrated equity (ROIE) averages ~4%. P/IE corrects this distortion.</p>
-                    <p><strong>Interpretation:</strong> Historical average P/IE ≈ 0.5–0.6 (vs. ~2.0 for P/B). Values well above the historical average suggest overvaluation after accounting for inflation's distortion of book value.</p>
+                    <p><strong>Interpretation:</strong> Historical average P/IE ≈ 0.5–0.6 (vs. ~2.0 for P/B). Signal uses full-history z-score: above +1σ → bearish, below -1σ → bullish.</p>
                 </div>
 
                 <div class="about-card">
@@ -308,7 +308,7 @@
 
                 <div class="about-card">
                     <h3>7. VIX & Volatility Regimes</h3>
-                    <p>The CBOE Volatility Index measures implied volatility from S&P 500 options. Low-volatility regimes (VIX &lt; 20) tend to favor trend-following strategies. High-volatility spikes (VIX &gt; 30) often coincide with market bottoms but also precede further declines.</p>
+                    <p>The CBOE Volatility Index measures implied volatility from S&P 500 options. Signal uses a <strong>5-year rolling z-score</strong> rather than fixed thresholds, adapting to the current volatility regime. Below -1σ (low vol) → bullish; above +1σ (elevated vol) → bearish; above +2σ → crisis cap eligible.</p>
                 </div>
 
                 <div class="about-card">

@@ -863,6 +863,50 @@ const DataStore = {
         return { mean, stddev, count: confirmed.length };
     },
 
+    // Compute stats using only data up to dateStr, optionally within a rolling window
+    // windowMonths=0 means full history up to dateStr
+    getSeriesStatsAsOf(seriesName, dateStr, windowMonths = 0) {
+        const data = this.processed[seriesName];
+        if (!data || data.length === 0) return null;
+
+        let confirmed = data.filter(d => !d.nowcast && d.date <= dateStr).map(d => d.value);
+        if (windowMonths > 0 && confirmed.length > windowMonths) {
+            confirmed = confirmed.slice(-windowMonths);
+        }
+        if (confirmed.length < 12) return null; // need at least 12 data points
+
+        const mean = confirmed.reduce((s, v) => s + v, 0) / confirmed.length;
+        const variance = confirmed.reduce((s, v) => s + (v - mean) ** 2, 0) / confirmed.length;
+        const stddev = Math.sqrt(variance);
+        if (stddev === 0) return null;
+        return { mean, stddev, count: confirmed.length };
+    },
+
+    // Pre-compute rolling stats lookup for efficient backtesting
+    // Returns { 'YYYY-MM': {mean, stddev}, ... }
+    buildRollingStatsLookup(seriesName, windowMonths = 0) {
+        const data = this.processed[seriesName];
+        if (!data || data.length === 0) return {};
+
+        const confirmed = data.filter(d => !d.nowcast);
+        const lookup = {};
+
+        for (let i = 0; i < confirmed.length; i++) {
+            const startIdx = windowMonths > 0 ? Math.max(0, i + 1 - windowMonths) : 0;
+            const slice = confirmed.slice(startIdx, i + 1).map(d => d.value);
+            if (slice.length < 12) continue;
+
+            const mean = slice.reduce((s, v) => s + v, 0) / slice.length;
+            const variance = slice.reduce((s, v) => s + (v - mean) ** 2, 0) / slice.length;
+            const stddev = Math.sqrt(variance);
+            if (stddev === 0) continue;
+
+            const monthKey = confirmed[i].date.substring(0, 7);
+            lookup[monthKey] = { mean, stddev, count: slice.length };
+        }
+        return lookup;
+    },
+
     _median(values) {
         if (!values || values.length === 0) return null;
         const sorted = [...values].sort((a, b) => a - b);
