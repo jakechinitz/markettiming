@@ -11,9 +11,15 @@ const Strategy = {
 
     ADVANCED_TOGGLES: [
         {
+            id: 'full_100',
+            label: '100% when not reducing',
+            description: 'Stay at 100% equity unless score triggers a reduction. Removes the 80% cautious tier — either fully invested or defensively positioned.',
+        },
+        {
             id: 'put_hedge',
-            label: 'Crisis put hedge',
-            description: 'In Crisis regime (score ≤ -3 + below 200d MA), buy 6-month puts at ~17.5% OTM using 3% of portfolio. Sell when in-the-money. Cost modeled via Black-Scholes using VIX.',
+            label: 'Put hedge',
+            description: 'Buy 6-month puts at ~17.5% OTM using 3% of portfolio when composite score falls to chosen threshold (below 200d MA required). Sell when ITM.',
+            select: { id: 'put_hedge_threshold', label: 'Trigger at score ≤', options: [0, -1, -2], default: 0 },
         },
         {
             id: 'vix_crisis_cap',
@@ -75,6 +81,10 @@ const Strategy = {
         this.ADVANCED_TOGGLES.forEach(t => {
             const el = document.getElementById(t.id);
             active[t.id] = !!(el && el.checked);
+            if (t.select) {
+                const sel = document.getElementById(t.select.id);
+                active[t.select.id] = sel ? parseInt(sel.value, 10) : t.select.default;
+            }
         });
         return active;
     },
@@ -108,20 +118,20 @@ const Strategy = {
     //   Composite > 0                       → 100% equity (bullish)
     //   Composite ≤ 0, above 200d           →  80% equity (cautious, trend intact)
     //   Composite ≤ 0, below 200d           →  60% equity (defensive, broken trend)
-    //   Composite ≤ -3, below 200d          →  40% equity (crisis: deeply bearish + broken trend)
-    scoreToAllocation(score, trend) {
+    //   Composite ≤ -2, below 200d          →  40% equity (crisis: deeply bearish + broken trend)
+    // With full_100 toggle: 100% unless score triggers defensive/crisis
+    scoreToAllocation(score, trend, full100 = false) {
         if (score > 0) return 1.0;
-        // Score ≤ 0: only go below 80% if price is below 200-day MA
         if (trend === -1) {
-            if (score <= -3) return 0.4;
+            if (score <= -2) return 0.4;
             return 0.6;
         }
-        return 0.8;
+        return full100 ? 1.0 : 0.8;
     },
 
     scoreToRegime(score, trend) {
         if (score > 0) return 'Bullish';
-        if (trend === -1 && score <= -3) return 'Crisis';
+        if (trend === -1 && score <= -2) return 'Crisis';
         if (trend === -1) return 'Defensive';
         return 'Cautious';
     },
@@ -194,10 +204,18 @@ const Strategy = {
         }
 
         // 2. Unemployment: below or above 12-month MA (uses nowcast if available)
+        // -2 if materially above MA (≥ 0.5pp), signaling rapid deterioration
         const unemp = DataStore.getLatest('unemployment');
         if (unemp && unemp.ma12 !== null) {
-            signals.unemployment = unemp.value < unemp.ma12 ? 1 : -1;
-            signals.unemploymentDetail = `${unemp.value.toFixed(1)}% ${unemp.value < unemp.ma12 ? '<' : '>'} MA ${unemp.ma12.toFixed(1)}%`;
+            const gap = unemp.value - unemp.ma12;
+            if (gap < 0) {
+                signals.unemployment = 1;
+            } else if (gap >= 0.5) {
+                signals.unemployment = -2;
+            } else {
+                signals.unemployment = -1;
+            }
+            signals.unemploymentDetail = `${unemp.value.toFixed(1)}% ${gap < 0 ? '<' : '>'} MA ${unemp.ma12.toFixed(1)}% (gap ${gap >= 0 ? '+' : ''}${gap.toFixed(2)}pp)`;
             signals.unemploymentNowcast = !!unemp.nowcast;
         }
 
@@ -273,8 +291,8 @@ const Strategy = {
         signals.maxPossible = validSignals.length;
 
         const trendSignal = signals.trend ?? 0;
-        const baseAlloc = this.scoreToAllocation(signals.composite, trendSignal);
         const toggles = this.getActiveToggles();
+        const baseAlloc = this.scoreToAllocation(signals.composite, trendSignal, toggles.full_100);
         const realizedVol = sp ? this.getRealizedVolAtDate(sp.date) : null;
         const context = {
             score: signals.composite,
@@ -294,7 +312,8 @@ const Strategy = {
         signals.realizedVol = realizedVol;
 
         // Put hedge recommendation for current signals
-        if (toggles.put_hedge && signals.composite <= -3 && trendSignal === -1) {
+        const putThreshold = toggles.put_hedge_threshold ?? 0;
+        if (toggles.put_hedge && signals.composite <= putThreshold && trendSignal === -1) {
             const vol = sp ? this.getImpliedVol(sp.date) : 0.35;
             const strike = sp ? sp.value * (1 - this.PUT_HEDGE.STRIKE_OTM) : 0;
             const putCost = this.bsPutPrice(1, 1 - this.PUT_HEDGE.STRIKE_OTM, this.PUT_HEDGE.TENOR_MONTHS / 12, vol);
@@ -326,7 +345,7 @@ const Strategy = {
         items.forEach(item => {
             if (item.value === undefined) return;
             const cls = item.value > 0 ? 'positive' : item.value < 0 ? 'negative' : 'neutral';
-            const label = item.value > 0 ? '+1' : item.value < 0 ? '-1' : '0';
+            const label = item.value > 0 ? `+${item.value}` : String(item.value);
             const badge = item.nowcast ? ' <span class="nowcast-badge">NOWCAST</span>' : '';
             html += `
                 <div class="signal-row">
@@ -339,7 +358,7 @@ const Strategy = {
         html += `
             <div class="composite-score">
                 <span>Composite: ${signals.regime}</span>
-                <span class="signal-value ${compositeClass}">${signals.composite > 0 ? '+' : ''}${signals.composite} / ${signals.maxPossible}</span>
+                <span class="signal-value ${compositeClass}">${signals.composite > 0 ? '+' : ''}${signals.composite}</span>
             </div>
             <div class="signal-row">
                 <span>Target Equity (base)</span>
@@ -400,10 +419,11 @@ const Strategy = {
             count++;
         }
 
-        // 2. Unemployment (1 month lag)
+        // 2. Unemployment (1 month lag) — -2 if materially above MA (≥ 0.5pp)
         const unemp = DataStore.getLaggedValue('unemployment', dateStr, CONFIG.PUB_LAG.UNEMPLOYMENT);
         if (unemp && unemp.ma12 !== null) {
-            score += unemp.value < unemp.ma12 ? 1 : -1;
+            const gap = unemp.value - unemp.ma12;
+            score += gap < 0 ? 1 : (gap >= 0.5 ? -2 : -1);
             count++;
         }
 
@@ -549,7 +569,7 @@ const Strategy = {
 
             const lagged = this.computeLaggedScore(monthly[i - 1].date);
             const trendSignal = lagged.context.trend ?? 0;
-            const baseAlloc = this.scoreToAllocation(lagged.score, trendSignal);
+            const baseAlloc = this.scoreToAllocation(lagged.score, trendSignal, toggles.full_100);
             const adjusted = this.applyAdvancedAllocation(baseAlloc, lagged.context, toggles);
 
             strategyValue *= (1 + ret * adjusted.alloc);
@@ -557,7 +577,8 @@ const Strategy = {
 
             // ─── Put hedge logic ─────────────────────────────────────
             if (toggles.put_hedge) {
-                const isCrisis = lagged.score <= -3 && trendSignal === -1;
+                const putThreshold = toggles.put_hedge_threshold ?? 0;
+                const shouldHedge = lagged.score <= putThreshold && trendSignal === -1;
 
                 // Check if active put should be settled
                 if (activePut) {
@@ -582,7 +603,7 @@ const Strategy = {
                 }
 
                 // Buy new puts if in crisis and no active position
-                if (isCrisis && !activePut) {
+                if (shouldHedge && !activePut) {
                     const premium = strategyValue * this.PUT_HEDGE.PREMIUM_PCT;
                     const strike = currPrice * (1 - this.PUT_HEDGE.STRIKE_OTM);
                     const vol = this.getImpliedVol(monthly[i].date);
