@@ -157,19 +157,19 @@
                             </div>
                             <div class="rule">
                                 <span class="rule-name">3. Volatility Regime <span class="nowcast-badge">REAL-TIME</span></span>
-                                <span class="rule-desc">VIX below 20 → +1, 20-30 → 0, above 30 → -1</span>
+                                <span class="rule-desc">VIX z-score (5yr rolling): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
                             </div>
                             <div class="rule">
                                 <span class="rule-name">4. Valuation (CAPE) <span class="nowcast-badge">~2mo lag</span></span>
-                                <span class="rule-desc">CAPE below 20 → +1, 20-30 → 0, above 30 → -1</span>
+                                <span class="rule-desc">CAPE z-score (full history): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
                             </div>
                             <div class="rule">
                                 <span class="rule-name">5. Valuation (P/IE) <span class="nowcast-badge">~2mo lag</span></span>
-                                <span class="rule-desc">P/IE below 0.45 → +1, 0.45-0.70 → 0, above 0.70 → -1</span>
+                                <span class="rule-desc">P/IE z-score (full history): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
                             </div>
                             <div class="rule">
                                 <span class="rule-name">6. Investor Allocation <span class="nowcast-badge">3mo lag, nowcast via S&P</span></span>
-                                <span class="rule-desc">Below -1σ → +1 (bullish), ±1σ → 0, above +2σ → -1 (bearish)</span>
+                                <span class="rule-desc">Allocation z-score (full history): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
                             </div>
                             <div class="rule">
                                 <span class="rule-name">7. Yield Curve (10Y-2Y) <span class="nowcast-badge">REAL-TIME</span></span>

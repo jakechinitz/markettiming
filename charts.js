@@ -89,8 +89,8 @@ const Charts = {
         const stats = DataStore.getSeriesStats('equityAlloc');
         const annotations = {};
         if (stats) {
-            const bullishLine = stats.mean + CONFIG.STRATEGY.ALLOC_BULLISH_STDDEV * stats.stddev;
-            const bearishLine = stats.mean + CONFIG.STRATEGY.ALLOC_BEARISH_STDDEV * stats.stddev;
+            const bullishLine = stats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * stats.stddev;
+            const bearishLine = stats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * stats.stddev;
             annotations.mean = {
                 type: 'line',
                 yMin: stats.mean,
@@ -228,6 +228,41 @@ const Charts = {
             datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
 
+        // Compute dynamic std-dev bands from full history
+        const capeStats = DataStore.getSeriesStats('cape');
+        const capeAnnotations = {};
+        if (capeStats) {
+            const bullishLine = capeStats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * capeStats.stddev;
+            const bearishLine = capeStats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * capeStats.stddev;
+            capeAnnotations.mean = {
+                type: 'line',
+                yMin: capeStats.mean,
+                yMax: capeStats.mean,
+                borderColor: CONFIG.COLORS.gray,
+                borderWidth: 1,
+                borderDash: [3, 3],
+                label: { content: `Mean (${capeStats.mean.toFixed(1)})`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            capeAnnotations.low = {
+                type: 'line',
+                yMin: bullishLine,
+                yMax: bullishLine,
+                borderColor: CONFIG.COLORS.green,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `Cheap -1σ (${bullishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            capeAnnotations.high = {
+                type: 'line',
+                yMin: bearishLine,
+                yMax: bearishLine,
+                borderColor: CONFIG.COLORS.red,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `Expensive +1σ (${bearishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+        }
+
         this.instances['chart-cape'] = new Chart(ctx, {
             type: 'line',
             data: {
@@ -238,28 +273,7 @@ const Charts = {
                 ...this.getBaseOptions(),
                 plugins: {
                     ...CONFIG.CHART_DEFAULTS.plugins,
-                    annotation: {
-                        annotations: {
-                            low: {
-                                type: 'line',
-                                yMin: CONFIG.STRATEGY.CAPE_LOW,
-                                yMax: CONFIG.STRATEGY.CAPE_LOW,
-                                borderColor: CONFIG.COLORS.green,
-                                borderWidth: 1,
-                                borderDash: [5, 5],
-                                label: { content: `Cheap (<${CONFIG.STRATEGY.CAPE_LOW})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
-                            },
-                            high: {
-                                type: 'line',
-                                yMin: CONFIG.STRATEGY.CAPE_HIGH,
-                                yMax: CONFIG.STRATEGY.CAPE_HIGH,
-                                borderColor: CONFIG.COLORS.red,
-                                borderWidth: 1,
-                                borderDash: [5, 5],
-                                label: { content: `Expensive (>${CONFIG.STRATEGY.CAPE_HIGH})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
-                            },
-                        },
-                    },
+                    annotation: { annotations: capeAnnotations },
                 },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
@@ -294,6 +308,41 @@ const Charts = {
             datasets.push(this.nowcastStyle(nowcast, 'Estimated (recent)'));
         }
 
+        // Compute dynamic std-dev bands from full history
+        const pieStats = DataStore.getSeriesStats('pie');
+        const pieAnnotations = {};
+        if (pieStats) {
+            const bullishLine = pieStats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * pieStats.stddev;
+            const bearishLine = pieStats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * pieStats.stddev;
+            pieAnnotations.mean = {
+                type: 'line',
+                yMin: pieStats.mean,
+                yMax: pieStats.mean,
+                borderColor: CONFIG.COLORS.gray,
+                borderWidth: 1,
+                borderDash: [3, 3],
+                label: { content: `Mean (${pieStats.mean.toFixed(2)})`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            pieAnnotations.low = {
+                type: 'line',
+                yMin: bullishLine,
+                yMax: bullishLine,
+                borderColor: CONFIG.COLORS.green,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `Cheap -1σ (${bullishLine.toFixed(2)})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            pieAnnotations.high = {
+                type: 'line',
+                yMin: bearishLine,
+                yMax: bearishLine,
+                borderColor: CONFIG.COLORS.red,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `Expensive +1σ (${bearishLine.toFixed(2)})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+        }
+
         this.instances['chart-pie'] = new Chart(ctx, {
             type: 'line',
             data: {
@@ -302,6 +351,10 @@ const Charts = {
             },
             options: {
                 ...this.getBaseOptions(),
+                plugins: {
+                    ...CONFIG.CHART_DEFAULTS.plugins,
+                    annotation: { annotations: pieAnnotations },
+                },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
                     y: {
@@ -483,6 +536,42 @@ const Charts = {
         this.destroy('chart-vix');
         const ctx = document.getElementById('chart-vix').getContext('2d');
 
+        // Compute rolling z-score bands from 5-year window
+        const lastVix = data[data.length - 1];
+        const vixStats = lastVix ? DataStore.getSeriesStatsAsOf('vix', lastVix.date, CONFIG.STRATEGY.VIX_ROLLING_MONTHS) : null;
+        const vixAnnotations = {};
+        if (vixStats) {
+            const bullishLine = vixStats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * vixStats.stddev;
+            const bearishLine = vixStats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * vixStats.stddev;
+            vixAnnotations.mean = {
+                type: 'line',
+                yMin: vixStats.mean,
+                yMax: vixStats.mean,
+                borderColor: CONFIG.COLORS.gray,
+                borderWidth: 1,
+                borderDash: [3, 3],
+                label: { content: `5yr Mean (${vixStats.mean.toFixed(1)})`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            vixAnnotations.low = {
+                type: 'line',
+                yMin: bullishLine,
+                yMax: bullishLine,
+                borderColor: CONFIG.COLORS.green,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `Low Vol -1σ (${bullishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+            vixAnnotations.high = {
+                type: 'line',
+                yMin: bearishLine,
+                yMax: bearishLine,
+                borderColor: CONFIG.COLORS.red,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                label: { content: `High Vol +1σ (${bearishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
+            };
+        }
+
         this.instances['chart-vix'] = new Chart(ctx, {
             type: 'line',
             data: {
@@ -502,33 +591,7 @@ const Charts = {
                 ...this.getBaseOptions(),
                 plugins: {
                     ...CONFIG.CHART_DEFAULTS.plugins,
-                    annotation: {
-                        annotations: {
-                            low: {
-                                type: 'box',
-                                yMin: 0,
-                                yMax: CONFIG.STRATEGY.VIX_LOW,
-                                backgroundColor: 'rgba(52, 211, 153, 0.05)',
-                                borderWidth: 0,
-                                label: { content: 'Low Vol', display: true, position: { x: 'start', y: 'center' }, color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
-                            },
-                            mid: {
-                                type: 'box',
-                                yMin: CONFIG.STRATEGY.VIX_LOW,
-                                yMax: CONFIG.STRATEGY.VIX_HIGH,
-                                backgroundColor: 'rgba(251, 191, 36, 0.05)',
-                                borderWidth: 0,
-                            },
-                            high: {
-                                type: 'box',
-                                yMin: CONFIG.STRATEGY.VIX_HIGH,
-                                yMax: 90,
-                                backgroundColor: 'rgba(248, 113, 113, 0.05)',
-                                borderWidth: 0,
-                                label: { content: 'High Vol', display: true, position: { x: 'start', y: 'center' }, color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
-                            },
-                        },
-                    },
+                    annotation: { annotations: vixAnnotations },
                 },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
