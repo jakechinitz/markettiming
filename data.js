@@ -877,30 +877,34 @@ const DataStore = {
 
     // Compute stats using only data up to dateStr, optionally within a rolling window
     // windowMonths=0 means full history up to dateStr
+    // Always reduces to monthly values first, so windowMonths is interpreted in actual months
+    // (otherwise daily series like VIX would give 60 days = 3 months instead of 60 months)
     getSeriesStatsAsOf(seriesName, dateStr, windowMonths = 0) {
         const data = this.processed[seriesName];
         if (!data || data.length === 0) return null;
 
-        let confirmed = data.filter(d => !d.nowcast && d.date <= dateStr).map(d => d.value);
-        if (windowMonths > 0 && confirmed.length > windowMonths) {
-            confirmed = confirmed.slice(-windowMonths);
+        const monthly = this.getMonthlyValues(data.filter(d => !d.nowcast && d.date <= dateStr));
+        let values = monthly.map(d => d.value);
+        if (windowMonths > 0 && values.length > windowMonths) {
+            values = values.slice(-windowMonths);
         }
-        if (confirmed.length < 12) return null; // need at least 12 data points
+        if (values.length < 12) return null; // need at least 12 monthly data points
 
-        const mean = confirmed.reduce((s, v) => s + v, 0) / confirmed.length;
-        const variance = confirmed.reduce((s, v) => s + (v - mean) ** 2, 0) / confirmed.length;
+        const mean = values.reduce((s, v) => s + v, 0) / values.length;
+        const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
         const stddev = Math.sqrt(variance);
         if (stddev === 0) return null;
-        return { mean, stddev, count: confirmed.length };
+        return { mean, stddev, count: values.length };
     },
 
     // Pre-compute rolling stats lookup for efficient backtesting
     // Returns { 'YYYY-MM': {mean, stddev}, ... }
+    // Reduces to monthly first so windowMonths is in actual months (matters for daily series like VIX)
     buildRollingStatsLookup(seriesName, windowMonths = 0) {
         const data = this.processed[seriesName];
         if (!data || data.length === 0) return {};
 
-        const confirmed = data.filter(d => !d.nowcast);
+        const confirmed = this.getMonthlyValues(data.filter(d => !d.nowcast));
         const lookup = {};
 
         for (let i = 0; i < confirmed.length; i++) {

@@ -33,6 +33,62 @@ const Charts = {
         this.renderYieldCurve();
     },
 
+    // Build datasets for moving mean / ±1σ bands aligned with `data` (one value per data point).
+    // Uses DataStore.buildRollingStatsLookup with the given window (0 = expanding history).
+    // Returns three datasets: mean (gray), bullish band (-1σ, green), bearish band (+1σ, red).
+    buildBandDatasets(data, seriesName, windowMonths, formatter = v => v) {
+        const lookup = DataStore.buildRollingStatsLookup(seriesName, windowMonths);
+        const meanArr = [], lowArr = [], highArr = [];
+        for (const d of data) {
+            const stats = lookup[d.date.substring(0, 7)];
+            if (stats) {
+                meanArr.push(stats.mean);
+                lowArr.push(stats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * stats.stddev);
+                highArr.push(stats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * stats.stddev);
+            } else {
+                meanArr.push(null); lowArr.push(null); highArr.push(null);
+            }
+        }
+        // Find latest non-null values for legend labels
+        const lastIdx = (arr) => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return i; return -1; };
+        const li = lastIdx(meanArr);
+        const meanLbl = li >= 0 ? formatter(meanArr[li]) : '—';
+        const lowLbl = li >= 0 ? formatter(lowArr[li]) : '—';
+        const highLbl = li >= 0 ? formatter(highArr[li]) : '—';
+        return [
+            {
+                label: `Bullish -1σ (now ${lowLbl})`,
+                data: lowArr,
+                borderColor: CONFIG.COLORS.green,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                pointRadius: 0,
+                fill: false,
+                tension: 0,
+            },
+            {
+                label: `Mean (now ${meanLbl})`,
+                data: meanArr,
+                borderColor: CONFIG.COLORS.gray,
+                borderWidth: 1,
+                borderDash: [3, 3],
+                pointRadius: 0,
+                fill: false,
+                tension: 0,
+            },
+            {
+                label: `Bearish +1σ (now ${highLbl})`,
+                data: highArr,
+                borderColor: CONFIG.COLORS.red,
+                borderWidth: 1,
+                borderDash: [5, 5],
+                pointRadius: 0,
+                fill: false,
+                tension: 0,
+            },
+        ];
+    },
+
     // Helper: split data into confirmed and nowcast segments for a dual-line look
     splitNowcast(data) {
         const lastConfirmedIdx = data.reduce((acc, d, i) => d.nowcast ? acc : i, -1);
@@ -84,41 +140,8 @@ const Charts = {
         if (hasNowcast) {
             datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
-
-        // Compute dynamic std-dev bands from confirmed data
-        const stats = DataStore.getSeriesStats('equityAlloc');
-        const annotations = {};
-        if (stats) {
-            const bullishLine = stats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * stats.stddev;
-            const bearishLine = stats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * stats.stddev;
-            annotations.mean = {
-                type: 'line',
-                yMin: stats.mean,
-                yMax: stats.mean,
-                borderColor: CONFIG.COLORS.gray,
-                borderWidth: 1,
-                borderDash: [3, 3],
-                label: { content: `Mean (${stats.mean.toFixed(1)}%)`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            annotations.low = {
-                type: 'line',
-                yMin: bullishLine,
-                yMax: bullishLine,
-                borderColor: CONFIG.COLORS.green,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `Bullish (<${bullishLine.toFixed(0)}%)`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            annotations.high = {
-                type: 'line',
-                yMin: bearishLine,
-                yMax: bearishLine,
-                borderColor: CONFIG.COLORS.red,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `Bearish (>${bearishLine.toFixed(0)}%)`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-        }
+        // Moving expanding-history bands (same as backtest uses)
+        datasets.push(...this.buildBandDatasets(data, 'equityAlloc', 0, v => `${v.toFixed(1)}%`));
 
         this.instances['chart-allocation'] = new Chart(ctx, {
             type: 'line',
@@ -128,10 +151,6 @@ const Charts = {
             },
             options: {
                 ...this.getBaseOptions(),
-                plugins: {
-                    ...CONFIG.CHART_DEFAULTS.plugins,
-                    annotation: { annotations },
-                },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
                     y: {
@@ -227,41 +246,8 @@ const Charts = {
         if (hasNowcast) {
             datasets.push(this.nowcastStyle(nowcast, 'Nowcast'));
         }
-
-        // Compute dynamic std-dev bands from full history
-        const capeStats = DataStore.getSeriesStats('cape');
-        const capeAnnotations = {};
-        if (capeStats) {
-            const bullishLine = capeStats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * capeStats.stddev;
-            const bearishLine = capeStats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * capeStats.stddev;
-            capeAnnotations.mean = {
-                type: 'line',
-                yMin: capeStats.mean,
-                yMax: capeStats.mean,
-                borderColor: CONFIG.COLORS.gray,
-                borderWidth: 1,
-                borderDash: [3, 3],
-                label: { content: `Mean (${capeStats.mean.toFixed(1)})`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            capeAnnotations.low = {
-                type: 'line',
-                yMin: bullishLine,
-                yMax: bullishLine,
-                borderColor: CONFIG.COLORS.green,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `Cheap -1σ (${bullishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            capeAnnotations.high = {
-                type: 'line',
-                yMin: bearishLine,
-                yMax: bearishLine,
-                borderColor: CONFIG.COLORS.red,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `Expensive +1σ (${bearishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-        }
+        // Moving expanding-history bands (cheap = mean-1σ, expensive = mean+1σ)
+        datasets.push(...this.buildBandDatasets(data, 'cape', 0, v => v.toFixed(1)));
 
         this.instances['chart-cape'] = new Chart(ctx, {
             type: 'line',
@@ -271,10 +257,6 @@ const Charts = {
             },
             options: {
                 ...this.getBaseOptions(),
-                plugins: {
-                    ...CONFIG.CHART_DEFAULTS.plugins,
-                    annotation: { annotations: capeAnnotations },
-                },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
                     y: {
@@ -307,41 +289,8 @@ const Charts = {
         if (hasNowcast) {
             datasets.push(this.nowcastStyle(nowcast, 'Estimated (recent)'));
         }
-
-        // Compute dynamic std-dev bands from full history
-        const pieStats = DataStore.getSeriesStats('pie');
-        const pieAnnotations = {};
-        if (pieStats) {
-            const bullishLine = pieStats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * pieStats.stddev;
-            const bearishLine = pieStats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * pieStats.stddev;
-            pieAnnotations.mean = {
-                type: 'line',
-                yMin: pieStats.mean,
-                yMax: pieStats.mean,
-                borderColor: CONFIG.COLORS.gray,
-                borderWidth: 1,
-                borderDash: [3, 3],
-                label: { content: `Mean (${pieStats.mean.toFixed(2)})`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            pieAnnotations.low = {
-                type: 'line',
-                yMin: bullishLine,
-                yMax: bullishLine,
-                borderColor: CONFIG.COLORS.green,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `Cheap -1σ (${bullishLine.toFixed(2)})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            pieAnnotations.high = {
-                type: 'line',
-                yMin: bearishLine,
-                yMax: bearishLine,
-                borderColor: CONFIG.COLORS.red,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `Expensive +1σ (${bearishLine.toFixed(2)})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-        }
+        // Moving expanding-history bands (cheap = mean-1σ, expensive = mean+1σ)
+        datasets.push(...this.buildBandDatasets(data, 'pie', 0, v => v.toFixed(2)));
 
         this.instances['chart-pie'] = new Chart(ctx, {
             type: 'line',
@@ -351,10 +300,6 @@ const Charts = {
             },
             options: {
                 ...this.getBaseOptions(),
-                plugins: {
-                    ...CONFIG.CHART_DEFAULTS.plugins,
-                    annotation: { annotations: pieAnnotations },
-                },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
                     y: {
@@ -536,63 +481,27 @@ const Charts = {
         this.destroy('chart-vix');
         const ctx = document.getElementById('chart-vix').getContext('2d');
 
-        // Compute rolling z-score bands from 5-year window
-        const lastVix = data[data.length - 1];
-        const vixStats = lastVix ? DataStore.getSeriesStatsAsOf('vix', lastVix.date, CONFIG.STRATEGY.VIX_ROLLING_MONTHS) : null;
-        const vixAnnotations = {};
-        if (vixStats) {
-            const bullishLine = vixStats.mean + CONFIG.STRATEGY.STDDEV_BULLISH * vixStats.stddev;
-            const bearishLine = vixStats.mean + CONFIG.STRATEGY.STDDEV_BEARISH * vixStats.stddev;
-            vixAnnotations.mean = {
-                type: 'line',
-                yMin: vixStats.mean,
-                yMax: vixStats.mean,
-                borderColor: CONFIG.COLORS.gray,
-                borderWidth: 1,
-                borderDash: [3, 3],
-                label: { content: `5yr Mean (${vixStats.mean.toFixed(1)})`, display: true, position: 'end', color: CONFIG.COLORS.gray, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            vixAnnotations.low = {
-                type: 'line',
-                yMin: bullishLine,
-                yMax: bullishLine,
-                borderColor: CONFIG.COLORS.green,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `Low Vol -1σ (${bullishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.green, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-            vixAnnotations.high = {
-                type: 'line',
-                yMin: bearishLine,
-                yMax: bearishLine,
-                borderColor: CONFIG.COLORS.red,
-                borderWidth: 1,
-                borderDash: [5, 5],
-                label: { content: `High Vol +1σ (${bearishLine.toFixed(1)})`, display: true, position: 'start', color: CONFIG.COLORS.red, font: { size: 10 }, backgroundColor: 'transparent' },
-            };
-        }
+        const datasets = [{
+            label: 'VIX',
+            data: data.map(d => d.value),
+            borderColor: CONFIG.COLORS.red,
+            backgroundColor: 'rgba(248, 113, 113, 0.05)',
+            fill: true,
+            borderWidth: 1.5,
+            pointRadius: 0,
+            tension: 0.1,
+        }];
+        // Moving 5-year rolling bands (low vol = mean-1σ, high vol = mean+1σ)
+        datasets.push(...this.buildBandDatasets(data, 'vix', CONFIG.STRATEGY.VIX_ROLLING_MONTHS, v => v.toFixed(1)));
 
         this.instances['chart-vix'] = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: data.map(d => d.date),
-                datasets: [{
-                    label: 'VIX',
-                    data: data.map(d => d.value),
-                    borderColor: CONFIG.COLORS.red,
-                    backgroundColor: 'rgba(248, 113, 113, 0.05)',
-                    fill: true,
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    tension: 0.1,
-                }],
+                datasets,
             },
             options: {
                 ...this.getBaseOptions(),
-                plugins: {
-                    ...CONFIG.CHART_DEFAULTS.plugins,
-                    annotation: { annotations: vixAnnotations },
-                },
                 scales: {
                     x: { ...CONFIG.CHART_DEFAULTS.scales.x },
                     y: {
