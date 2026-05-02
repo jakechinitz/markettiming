@@ -157,19 +157,19 @@
                             </div>
                             <div class="rule">
                                 <span class="rule-name">3. Volatility Regime <span class="nowcast-badge">REAL-TIME</span></span>
-                                <span class="rule-desc">VIX z-score (5yr rolling): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
+                                <span class="rule-desc">VIX z-score (5yr rolling, bands move over time): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">4. Valuation (CAPE) <span class="nowcast-badge">~2mo lag</span></span>
-                                <span class="rule-desc">CAPE z-score (full history): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
+                                <span class="rule-name">4. Valuation (CAPE) <span class="nowcast-badge">~2mo lag · ½ weight</span></span>
+                                <span class="rule-desc">CAPE z-score (expanding history): below -1σ → +0.5, ±1σ → 0, above +1σ → -0.5</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">5. Valuation (P/IE) <span class="nowcast-badge">~2mo lag</span></span>
-                                <span class="rule-desc">P/IE z-score (full history): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
+                                <span class="rule-name">5. Valuation (P/IE) <span class="nowcast-badge">~2mo lag · ½ weight</span></span>
+                                <span class="rule-desc">P/IE z-score (expanding history): below -1σ → +0.5, ±1σ → 0, above +1σ → -0.5</span>
                             </div>
                             <div class="rule">
                                 <span class="rule-name">6. Investor Allocation <span class="nowcast-badge">3mo lag, nowcast via S&P</span></span>
-                                <span class="rule-desc">Allocation z-score (full history): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
+                                <span class="rule-desc">Allocation z-score (expanding history): below -1σ → +1, ±1σ → 0, above +1σ → -1</span>
                             </div>
                             <div class="rule">
                                 <span class="rule-name">7. Yield Curve (10Y-2Y) <span class="nowcast-badge">REAL-TIME</span></span>
@@ -202,20 +202,16 @@
                                 <tr><td>Composite ≤ -2, below 200d MA</td><td class="signal-bearish">Crisis</td><td>40%</td></tr>
                             </tbody>
                         </table>
-                        <p class="lag-note">The 200-day moving average acts as a trend gate: the model only de-risks below 80% when both the composite score is non-positive and the market's trend is broken.</p>
+                        <p class="lag-note">The 200-day moving average acts as a trend gate: the model only de-risks below 80% when both the composite score is non-positive and the market's trend is broken. In the backtest, z-score bands for VIX/CAPE/P/IE/allocation are computed using only data available up to each historical point — no look-ahead bias.</p>
                     </div>
                 </div>
 
-                <details class="advanced-options" id="strategy-advanced-options">
-                    <summary>Advanced strategy toggles (optional)</summary>
+                <div class="advanced-options" id="strategy-advanced-options">
                     <div class="advanced-options-grid">
                         <label class="toggle-item"><input type="checkbox" id="full_100"> <span><strong>100% when not reducing</strong><br>Stay at 100% equity unless score triggers defensive positioning. Removes the 80% cautious tier.</span></label>
                         <label class="toggle-item"><input type="checkbox" id="put_hedge"> <span><strong>Put hedge</strong><br>Buy 6-month puts at ~17.5% OTM using 3% of portfolio when below 200d MA. Trigger at score ≤ <select id="put_hedge_threshold" style="width:50px"><option value="0">0</option><option value="-1">-1</option><option value="-2">-2</option></select>. Cost modeled via Black-Scholes with VIX + 25% skew premium. Sell when ITM.</span></label>
-                        <label class="toggle-item"><input type="checkbox" id="vix_crisis_cap"> <span><strong>VIX crisis cap</strong><br>Cap equity at 40% when VIX z-score ≥ +2σ (5yr rolling).</span></label>
-                        <label class="toggle-item"><input type="checkbox" id="realized_vol_cap"> <span><strong>Realized volatility cap</strong><br>Use 3m annualized realized vol; cap at 60% if >25%, 40% if >35%.</span></label>
-                        <label class="toggle-item"><input type="checkbox" id="valuation_double_cap"> <span><strong>Valuation double-red cap</strong><br>Cap at 60% when CAPE and P/IE are both expensive (+1σ).</span></label>
                     </div>
-                </details>
+                </div>
 
                 <div class="chart-container">
                     <canvas id="chart-strategy"></canvas>

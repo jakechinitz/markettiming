@@ -21,21 +21,6 @@ const Strategy = {
             description: 'Buy 6-month puts at ~17.5% OTM using 3% of portfolio when composite score falls to chosen threshold (below 200d MA required). Sell when ITM.',
             select: { id: 'put_hedge_threshold', label: 'Trigger at score ≤', options: [0, -1, -2], default: 0 },
         },
-        {
-            id: 'vix_crisis_cap',
-            label: 'VIX crisis cap',
-            description: 'Cap to 40% equity when VIX z-score ≥ +2σ on 5-year rolling window (risk-off shock regime).',
-        },
-        {
-            id: 'realized_vol_cap',
-            label: 'Realized volatility cap',
-            description: 'Use 3-month annualized realized vol from S&P; cap at 60% when >25%, 40% when >35%.',
-        },
-        {
-            id: 'valuation_double_cap',
-            label: 'Valuation double-red cap',
-            description: 'Cap to 60% equity when both CAPE and P/IE are in expensive territory simultaneously.',
-        },
     ],
 
     // ─── Black-Scholes put pricing ─────────────────────────────────────
@@ -158,40 +143,6 @@ const Strategy = {
         return Math.sqrt(variance) * Math.sqrt(12) * 100;
     },
 
-    applyAdvancedAllocation(baseAlloc, context, toggles) {
-        let alloc = baseAlloc;
-        const notes = [];
-
-        if (toggles.vix_crisis_cap && context.vixZ !== null && context.vixZ >= CONFIG.STRATEGY.VIX_CRISIS_STDDEV) {
-            if (alloc > 0.4) {
-                alloc = 0.4;
-                notes.push(`VIX crisis cap applied (z=${context.vixZ.toFixed(2)}, VIX ${context.vixValue.toFixed(1)})`);
-            }
-        }
-
-        if (toggles.realized_vol_cap && context.realizedVol !== null) {
-            if (context.realizedVol > 35 && alloc > 0.4) {
-                alloc = 0.4;
-                notes.push(`Realized vol cap to 40% (${context.realizedVol.toFixed(1)}% ann.)`);
-            } else if (context.realizedVol > 25 && alloc > 0.6) {
-                alloc = 0.6;
-                notes.push(`Realized vol cap to 60% (${context.realizedVol.toFixed(1)}% ann.)`);
-            }
-        }
-
-        if (
-            toggles.valuation_double_cap
-            && context.capeSignal === -1
-            && context.pieSignal === -1
-            && alloc > 0.6
-        ) {
-            alloc = 0.6;
-            notes.push('Valuation double-red cap applied (CAPE + P/IE expensive)');
-        }
-
-        return { alloc, notes };
-    },
-
     // Current signals — uses nowcast data for the most up-to-date reading
     computeSignals() {
         const signals = {};
@@ -285,9 +236,12 @@ const Strategy = {
             signals.yieldCurveDetail = `10Y-2Y spread at ${yc.value.toFixed(2)}%`;
         }
 
-        const components = ['trend', 'unemployment', 'vix', 'cape', 'pie', 'allocation', 'yieldCurve'];
+        // Composite score with weights — CAPE/PIE are valuation metrics that
+        // overlap conceptually, so each gets half weight to avoid double-counting.
+        const weights = { trend: 1, unemployment: 1, vix: 1, cape: 0.5, pie: 0.5, allocation: 1, yieldCurve: 1 };
+        const components = Object.keys(weights);
         const validSignals = components.filter(c => signals[c] !== undefined);
-        signals.composite = validSignals.reduce((sum, c) => sum + signals[c], 0);
+        signals.composite = validSignals.reduce((sum, c) => sum + signals[c] * weights[c], 0);
         signals.maxPossible = validSignals.length;
 
         const trendSignal = signals.trend ?? 0;
@@ -303,12 +257,10 @@ const Strategy = {
             capeSignal: signals.cape,
             pieSignal: signals.pie,
         };
-        const adjusted = this.applyAdvancedAllocation(baseAlloc, context, toggles);
-
         signals.regime = this.scoreToRegime(signals.composite, trendSignal);
         signals.equityPctBase = Math.round(baseAlloc * 100);
-        signals.equityPct = Math.round(adjusted.alloc * 100);
-        signals.adjustmentNotes = adjusted.notes;
+        signals.equityPct = Math.round(baseAlloc * 100);
+        signals.adjustmentNotes = [];
         signals.realizedVol = realizedVol;
 
         // Put hedge recommendation for current signals
@@ -387,13 +339,16 @@ const Strategy = {
     // Compute a single signal score at a given date using lagged data
     // This is what an investor would have actually known at `dateStr`
     computeLaggedScore(dateStr) {
-        // Cache stats (computed once per backtest run)
+        // Cache stats lookups (computed once per backtest run).
+        // For backtest correctness, each historical point uses only data
+        // available up to that point — no look-ahead bias.
         if (!this._backtestStats) {
             this._backtestStats = {
-                alloc: DataStore.getSeriesStats('equityAlloc'),
-                cape: DataStore.getSeriesStats('cape'),
-                pie: DataStore.getSeriesStats('pie'),
-                // Pre-build rolling VIX stats lookup for efficiency
+                // Expanding-window stats for full-history metrics
+                alloc: DataStore.buildRollingStatsLookup('equityAlloc', 0),
+                cape: DataStore.buildRollingStatsLookup('cape', 0),
+                pie: DataStore.buildRollingStatsLookup('pie', 0),
+                // Rolling 5-year window for VIX (regime-adaptive)
                 vixRolling: DataStore.buildRollingStatsLookup('vix', CONFIG.STRATEGY.VIX_ROLLING_MONTHS),
             };
         }
@@ -427,11 +382,10 @@ const Strategy = {
             count++;
         }
 
-        // 3. VIX (0 month lag — 5-year rolling z-score)
+        // 3. VIX (0 month lag — 5-year rolling z-score, expanding bands)
         const vix = DataStore.getLaggedValue('vix', dateStr, CONFIG.PUB_LAG.VIX);
         if (vix) {
-            const vixMonth = vix.date.substring(0, 7);
-            const vixStats = this._backtestStats.vixRolling[vixMonth];
+            const vixStats = this._backtestStats.vixRolling[vix.date.substring(0, 7)];
             if (vixStats) {
                 const { signal, z } = this.classifyByZScore(vix.value, vixStats);
                 score += signal;
@@ -441,30 +395,39 @@ const Strategy = {
             count++;
         }
 
-        // 4. CAPE (2 month lag — full-history z-score)
+        // 4. CAPE (2 month lag — half weight, expanding-history z-score)
         const cape = DataStore.getLaggedValue('cape', dateStr, CONFIG.PUB_LAG.CAPE);
-        if (cape && this._backtestStats.cape) {
-            const { signal } = this.classifyByZScore(cape.value, this._backtestStats.cape);
-            score += signal;
-            context.capeSignal = signal;
+        if (cape) {
+            const capeStats = this._backtestStats.cape[cape.date.substring(0, 7)];
+            if (capeStats) {
+                const { signal } = this.classifyByZScore(cape.value, capeStats);
+                score += signal * 0.5;
+                context.capeSignal = signal;
+            }
             count++;
         }
 
-        // 5. P/IE (2 month lag — full-history z-score)
+        // 5. P/IE (2 month lag — half weight, expanding-history z-score)
         const pieLag = CONFIG.PUB_LAG.PIE ?? CONFIG.PUB_LAG.CAPE;
         const pie = DataStore.getLaggedValue('pie', dateStr, pieLag);
-        if (pie && this._backtestStats.pie) {
-            const { signal } = this.classifyByZScore(pie.value, this._backtestStats.pie);
-            score += signal;
-            context.pieSignal = signal;
+        if (pie) {
+            const pieStats = this._backtestStats.pie[pie.date.substring(0, 7)];
+            if (pieStats) {
+                const { signal } = this.classifyByZScore(pie.value, pieStats);
+                score += signal * 0.5;
+                context.pieSignal = signal;
+            }
             count++;
         }
 
-        // 6. Equity allocation (1 month lag — full-history z-score)
+        // 6. Equity allocation (1 month lag — expanding-history z-score)
         const alloc = DataStore.getLaggedValue('equityAlloc', dateStr, CONFIG.PUB_LAG.EQUITY_ALLOC);
-        if (alloc && this._backtestStats.alloc) {
-            const { signal } = this.classifyByZScore(alloc.value, this._backtestStats.alloc);
-            score += signal;
+        if (alloc) {
+            const allocStats = this._backtestStats.alloc[alloc.date.substring(0, 7)];
+            if (allocStats) {
+                const { signal } = this.classifyByZScore(alloc.value, allocStats);
+                score += signal;
+            }
             count++;
         }
 
@@ -570,9 +533,8 @@ const Strategy = {
             const lagged = this.computeLaggedScore(monthly[i - 1].date);
             const trendSignal = lagged.context.trend ?? 0;
             const baseAlloc = this.scoreToAllocation(lagged.score, trendSignal, toggles.full_100);
-            const adjusted = this.applyAdvancedAllocation(baseAlloc, lagged.context, toggles);
 
-            strategyValue *= (1 + ret * adjusted.alloc);
+            strategyValue *= (1 + ret * baseAlloc);
             buyHoldValue *= (1 + ret);
 
             // ─── Put hedge logic ─────────────────────────────────────
