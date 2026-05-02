@@ -186,28 +186,28 @@ const Strategy = {
             signals.vixValue = vix.value;
         }
 
-        // 4. Valuation (CAPE) — full-history z-score
+        // 4. Valuation (CAPE) — full-history z-score, half weight
         const cape = DataStore.getLatest('cape');
         if (cape) {
             const capeStats = DataStore.getSeriesStats('cape');
             if (capeStats) {
                 const { signal, z } = this.classifyByZScore(cape.value, capeStats);
-                signals.cape = signal;
-                signals.capeDetail = `CAPE ${cape.value.toFixed(1)} (z=${z.toFixed(2)}, μ=${capeStats.mean.toFixed(1)}, σ=${capeStats.stddev.toFixed(1)})`;
+                signals.cape = signal * 0.5;
+                signals.capeDetail = `CAPE ${cape.value.toFixed(1)} (z=${z.toFixed(2)}, μ=${capeStats.mean.toFixed(1)}, σ=${capeStats.stddev.toFixed(1)}, ½ wt)`;
             } else {
                 signals.cape = 0;
                 signals.capeDetail = `CAPE at ${cape.value.toFixed(1)} (no stats)`;
             }
         }
 
-        // 5. Valuation (P/IE) — full-history z-score
+        // 5. Valuation (P/IE) — full-history z-score, half weight
         const pie = DataStore.getLatest('pie');
         if (pie) {
             const pieStats = DataStore.getSeriesStats('pie');
             if (pieStats) {
                 const { signal, z } = this.classifyByZScore(pie.value, pieStats);
-                signals.pie = signal;
-                signals.pieDetail = `P/IE ${pie.value.toFixed(2)} (z=${z.toFixed(2)}, μ=${pieStats.mean.toFixed(2)}, σ=${pieStats.stddev.toFixed(2)})`;
+                signals.pie = signal * 0.5;
+                signals.pieDetail = `P/IE ${pie.value.toFixed(2)} (z=${z.toFixed(2)}, μ=${pieStats.mean.toFixed(2)}, σ=${pieStats.stddev.toFixed(2)}, ½ wt)`;
             } else {
                 signals.pie = 0;
                 signals.pieDetail = `P/IE at ${pie.value.toFixed(2)} (no stats)`;
@@ -236,12 +236,10 @@ const Strategy = {
             signals.yieldCurveDetail = `10Y-2Y spread at ${yc.value.toFixed(2)}%`;
         }
 
-        // Composite score with weights — CAPE/PIE are valuation metrics that
-        // overlap conceptually, so each gets half weight to avoid double-counting.
-        const weights = { trend: 1, unemployment: 1, vix: 1, cape: 0.5, pie: 0.5, allocation: 1, yieldCurve: 1 };
-        const components = Object.keys(weights);
+        // Composite score — CAPE/PIE half weight is baked into signal values (±0.5)
+        const components = ['trend', 'unemployment', 'vix', 'cape', 'pie', 'allocation', 'yieldCurve'];
         const validSignals = components.filter(c => signals[c] !== undefined);
-        signals.composite = validSignals.reduce((sum, c) => sum + signals[c] * weights[c], 0);
+        signals.composite = validSignals.reduce((sum, c) => sum + signals[c], 0);
         signals.maxPossible = validSignals.length;
 
         const trendSignal = signals.trend ?? 0;
