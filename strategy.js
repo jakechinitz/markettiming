@@ -285,9 +285,12 @@ const Strategy = {
             signals.yieldCurveDetail = `10Y-2Y spread at ${yc.value.toFixed(2)}%`;
         }
 
-        const components = ['trend', 'unemployment', 'vix', 'cape', 'pie', 'allocation', 'yieldCurve'];
+        // Composite score with weights — CAPE/PIE are valuation metrics that
+        // overlap conceptually, so each gets half weight to avoid double-counting.
+        const weights = { trend: 1, unemployment: 1, vix: 1, cape: 0.5, pie: 0.5, allocation: 1, yieldCurve: 1 };
+        const components = Object.keys(weights);
         const validSignals = components.filter(c => signals[c] !== undefined);
-        signals.composite = validSignals.reduce((sum, c) => sum + signals[c], 0);
+        signals.composite = validSignals.reduce((sum, c) => sum + signals[c] * weights[c], 0);
         signals.maxPossible = validSignals.length;
 
         const trendSignal = signals.trend ?? 0;
@@ -387,13 +390,16 @@ const Strategy = {
     // Compute a single signal score at a given date using lagged data
     // This is what an investor would have actually known at `dateStr`
     computeLaggedScore(dateStr) {
-        // Cache stats (computed once per backtest run)
+        // Cache stats lookups (computed once per backtest run).
+        // For backtest correctness, each historical point uses only data
+        // available up to that point — no look-ahead bias.
         if (!this._backtestStats) {
             this._backtestStats = {
-                alloc: DataStore.getSeriesStats('equityAlloc'),
-                cape: DataStore.getSeriesStats('cape'),
-                pie: DataStore.getSeriesStats('pie'),
-                // Pre-build rolling VIX stats lookup for efficiency
+                // Expanding-window stats for full-history metrics
+                alloc: DataStore.buildRollingStatsLookup('equityAlloc', 0),
+                cape: DataStore.buildRollingStatsLookup('cape', 0),
+                pie: DataStore.buildRollingStatsLookup('pie', 0),
+                // Rolling 5-year window for VIX (regime-adaptive)
                 vixRolling: DataStore.buildRollingStatsLookup('vix', CONFIG.STRATEGY.VIX_ROLLING_MONTHS),
             };
         }
@@ -427,11 +433,10 @@ const Strategy = {
             count++;
         }
 
-        // 3. VIX (0 month lag — 5-year rolling z-score)
+        // 3. VIX (0 month lag — 5-year rolling z-score, expanding bands)
         const vix = DataStore.getLaggedValue('vix', dateStr, CONFIG.PUB_LAG.VIX);
         if (vix) {
-            const vixMonth = vix.date.substring(0, 7);
-            const vixStats = this._backtestStats.vixRolling[vixMonth];
+            const vixStats = this._backtestStats.vixRolling[vix.date.substring(0, 7)];
             if (vixStats) {
                 const { signal, z } = this.classifyByZScore(vix.value, vixStats);
                 score += signal;
@@ -441,30 +446,39 @@ const Strategy = {
             count++;
         }
 
-        // 4. CAPE (2 month lag — full-history z-score)
+        // 4. CAPE (2 month lag — half weight, expanding-history z-score)
         const cape = DataStore.getLaggedValue('cape', dateStr, CONFIG.PUB_LAG.CAPE);
-        if (cape && this._backtestStats.cape) {
-            const { signal } = this.classifyByZScore(cape.value, this._backtestStats.cape);
-            score += signal;
-            context.capeSignal = signal;
+        if (cape) {
+            const capeStats = this._backtestStats.cape[cape.date.substring(0, 7)];
+            if (capeStats) {
+                const { signal } = this.classifyByZScore(cape.value, capeStats);
+                score += signal * 0.5;
+                context.capeSignal = signal;
+            }
             count++;
         }
 
-        // 5. P/IE (2 month lag — full-history z-score)
+        // 5. P/IE (2 month lag — half weight, expanding-history z-score)
         const pieLag = CONFIG.PUB_LAG.PIE ?? CONFIG.PUB_LAG.CAPE;
         const pie = DataStore.getLaggedValue('pie', dateStr, pieLag);
-        if (pie && this._backtestStats.pie) {
-            const { signal } = this.classifyByZScore(pie.value, this._backtestStats.pie);
-            score += signal;
-            context.pieSignal = signal;
+        if (pie) {
+            const pieStats = this._backtestStats.pie[pie.date.substring(0, 7)];
+            if (pieStats) {
+                const { signal } = this.classifyByZScore(pie.value, pieStats);
+                score += signal * 0.5;
+                context.pieSignal = signal;
+            }
             count++;
         }
 
-        // 6. Equity allocation (1 month lag — full-history z-score)
+        // 6. Equity allocation (1 month lag — expanding-history z-score)
         const alloc = DataStore.getLaggedValue('equityAlloc', dateStr, CONFIG.PUB_LAG.EQUITY_ALLOC);
-        if (alloc && this._backtestStats.alloc) {
-            const { signal } = this.classifyByZScore(alloc.value, this._backtestStats.alloc);
-            score += signal;
+        if (alloc) {
+            const allocStats = this._backtestStats.alloc[alloc.date.substring(0, 7)];
+            if (allocStats) {
+                const { signal } = this.classifyByZScore(alloc.value, allocStats);
+                score += signal;
+            }
             count++;
         }
 
