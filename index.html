@@ -206,16 +206,12 @@
                     </div>
                 </div>
 
-                <details class="advanced-options" id="strategy-advanced-options">
-                    <summary>Advanced strategy toggles (optional)</summary>
+                <div class="advanced-options" id="strategy-advanced-options">
                     <div class="advanced-options-grid">
                         <label class="toggle-item"><input type="checkbox" id="full_100"> <span><strong>100% when not reducing</strong><br>Stay at 100% equity unless score triggers defensive positioning. Removes the 80% cautious tier.</span></label>
                         <label class="toggle-item"><input type="checkbox" id="put_hedge"> <span><strong>Put hedge</strong><br>Buy 6-month puts at ~17.5% OTM using 3% of portfolio when below 200d MA. Trigger at score ≤ <select id="put_hedge_threshold" style="width:50px"><option value="0">0</option><option value="-1">-1</option><option value="-2">-2</option></select>. Cost modeled via Black-Scholes with VIX + 25% skew premium. Sell when ITM.</span></label>
-                        <label class="toggle-item"><input type="checkbox" id="vix_crisis_cap"> <span><strong>VIX crisis cap</strong><br>Cap equity at 40% when VIX z-score ≥ +2σ (5yr rolling).</span></label>
-                        <label class="toggle-item"><input type="checkbox" id="realized_vol_cap"> <span><strong>Realized volatility cap</strong><br>Use 3m annualized realized vol; cap at 60% if >25%, 40% if >35%.</span></label>
-                        <label class="toggle-item"><input type="checkbox" id="valuation_double_cap"> <span><strong>Valuation double-red cap</strong><br>Cap at 60% when CAPE and P/IE are both expensive (+1σ).</span></label>
                     </div>
-                </details>
+                </div>
 
                 <div class="chart-container">
                     <canvas id="chart-strategy"></canvas>

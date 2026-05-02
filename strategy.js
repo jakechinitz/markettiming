@@ -21,21 +21,6 @@ const Strategy = {
             description: 'Buy 6-month puts at ~17.5% OTM using 3% of portfolio when composite score falls to chosen threshold (below 200d MA required). Sell when ITM.',
             select: { id: 'put_hedge_threshold', label: 'Trigger at score ≤', options: [0, -1, -2], default: 0 },
         },
-        {
-            id: 'vix_crisis_cap',
-            label: 'VIX crisis cap',
-            description: 'Cap to 40% equity when VIX z-score ≥ +2σ on 5-year rolling window (risk-off shock regime).',
-        },
-        {
-            id: 'realized_vol_cap',
-            label: 'Realized volatility cap',
-            description: 'Use 3-month annualized realized vol from S&P; cap at 60% when >25%, 40% when >35%.',
-        },
-        {
-            id: 'valuation_double_cap',
-            label: 'Valuation double-red cap',
-            description: 'Cap to 60% equity when both CAPE and P/IE are in expensive territory simultaneously.',
-        },
     ],
 
     // ─── Black-Scholes put pricing ─────────────────────────────────────
@@ -158,40 +143,6 @@ const Strategy = {
         return Math.sqrt(variance) * Math.sqrt(12) * 100;
     },
 
-    applyAdvancedAllocation(baseAlloc, context, toggles) {
-        let alloc = baseAlloc;
-        const notes = [];
-
-        if (toggles.vix_crisis_cap && context.vixZ !== null && context.vixZ >= CONFIG.STRATEGY.VIX_CRISIS_STDDEV) {
-            if (alloc > 0.4) {
-                alloc = 0.4;
-                notes.push(`VIX crisis cap applied (z=${context.vixZ.toFixed(2)}, VIX ${context.vixValue.toFixed(1)})`);
-            }
-        }
-
-        if (toggles.realized_vol_cap && context.realizedVol !== null) {
-            if (context.realizedVol > 35 && alloc > 0.4) {
-                alloc = 0.4;
-                notes.push(`Realized vol cap to 40% (${context.realizedVol.toFixed(1)}% ann.)`);
-            } else if (context.realizedVol > 25 && alloc > 0.6) {
-                alloc = 0.6;
-                notes.push(`Realized vol cap to 60% (${context.realizedVol.toFixed(1)}% ann.)`);
-            }
-        }
-
-        if (
-            toggles.valuation_double_cap
-            && context.capeSignal === -1
-            && context.pieSignal === -1
-            && alloc > 0.6
-        ) {
-            alloc = 0.6;
-            notes.push('Valuation double-red cap applied (CAPE + P/IE expensive)');
-        }
-
-        return { alloc, notes };
-    },
-
     // Current signals — uses nowcast data for the most up-to-date reading
     computeSignals() {
         const signals = {};
@@ -306,12 +257,10 @@ const Strategy = {
             capeSignal: signals.cape,
             pieSignal: signals.pie,
         };
-        const adjusted = this.applyAdvancedAllocation(baseAlloc, context, toggles);
-
         signals.regime = this.scoreToRegime(signals.composite, trendSignal);
         signals.equityPctBase = Math.round(baseAlloc * 100);
-        signals.equityPct = Math.round(adjusted.alloc * 100);
-        signals.adjustmentNotes = adjusted.notes;
+        signals.equityPct = Math.round(baseAlloc * 100);
+        signals.adjustmentNotes = [];
         signals.realizedVol = realizedVol;
 
         // Put hedge recommendation for current signals
@@ -584,9 +533,8 @@ const Strategy = {
             const lagged = this.computeLaggedScore(monthly[i - 1].date);
             const trendSignal = lagged.context.trend ?? 0;
             const baseAlloc = this.scoreToAllocation(lagged.score, trendSignal, toggles.full_100);
-            const adjusted = this.applyAdvancedAllocation(baseAlloc, lagged.context, toggles);
 
-            strategyValue *= (1 + ret * adjusted.alloc);
+            strategyValue *= (1 + ret * baseAlloc);
             buyHoldValue *= (1 + ret);
 
             // ─── Put hedge logic ─────────────────────────────────────
