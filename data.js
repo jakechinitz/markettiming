@@ -82,6 +82,20 @@ const DataStore = {
 
     async fetchFred(seriesId, startDate) {
         const errors = [];
+
+        // Strategy 0: Pre-fetched static CSV (built by GitHub Actions, same-origin = no CORS)
+        try {
+            const resp = await this._fetch(`data/fred/${seriesId}.csv`, 5000);
+            if (resp.ok) {
+                const csv = await resp.text();
+                const data = this._parseFredCsv(csv, seriesId);
+                if (startDate) return data.filter(d => d.date >= startDate);
+                return data;
+            }
+        } catch (err) {
+            errors.push(`static: ${err.message}`);
+        }
+
         const keys = this._getFredKeys();
 
         // Strategy 1: FRED JSON API with API key (has CORS headers)
@@ -101,7 +115,27 @@ const DataStore = {
             }
         }
 
-        // Strategy 2: FRED CSV endpoint via CORS proxy (no key needed)
+        // Strategy 2: FRED JSON API via CORS proxy (with key)
+        for (const key of keys) {
+            const params = new URLSearchParams({
+                series_id: seriesId, file_type: 'json', sort_order: 'asc', api_key: key,
+            });
+            if (startDate) params.set('observation_start', startDate);
+            const apiUrl = `${CONFIG.FRED_BASE_URL}?${params}`;
+            for (const makeProxy of this.CORS_PROXIES) {
+                try {
+                    const proxied = makeProxy(apiUrl);
+                    console.log(`[FRED] ${seriesId} via API proxy`);
+                    const resp = await this._fetch(proxied, 20000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return this._parseFredJson(await resp.json(), seriesId);
+                } catch (err) {
+                    errors.push(`api-proxy: ${err.message}`);
+                }
+            }
+        }
+
+        // Strategy 3: FRED CSV endpoint via CORS proxy (no key needed)
         const csvParams = new URLSearchParams({ id: seriesId });
         if (startDate) csvParams.set('cosd', startDate);
         const csvUrl = `https://fred.stlouisfed.org/graph/fredgraph.csv?${csvParams}`;

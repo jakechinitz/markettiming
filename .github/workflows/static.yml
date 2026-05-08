@@ -3,6 +3,9 @@ name: Deploy static content to Pages
 on:
   push:
     branches: ["main"]
+  schedule:
+    # Refresh FRED data daily at 6am UTC (after most FRED releases)
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -27,6 +30,19 @@ jobs:
         run: |
           sed -i "s/__FRED_API_KEY_1__/${{ secrets.FRED_API_KEY_1 }}/g" config.js
           sed -i "s/__FRED_API_KEY_2__/${{ secrets.FRED_API_KEY_2 }}/g" config.js
+      - name: Pre-fetch FRED data
+        run: |
+          mkdir -p data/fred
+          SERIES="UNRATE CPIAUCSL BOGZ1FL153064486Q ICSA T10Y2Y"
+          for s in $SERIES; do
+            echo "Fetching $s..."
+            curl -sf --retry 3 --retry-delay 5 --max-time 30 \
+              "https://fred.stlouisfed.org/graph/fredgraph.csv?id=${s}" \
+              -o "data/fred/${s}.csv" \
+              || echo "WARNING: Failed to fetch $s"
+          done
+          echo "Pre-fetched files:"
+          ls -la data/fred/
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
