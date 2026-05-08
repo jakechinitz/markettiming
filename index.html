@@ -231,23 +231,11 @@
         <div id="tab-data" class="tab-content">
             <section class="data-section">
                 <div class="chart-header">
-                    <h2>Raw Data</h2>
-                    <p class="chart-description">All indicator data in tabular form. Download as CSV for your own analysis.</p>
+                    <h2>Complete Data & Backtest</h2>
+                    <p class="chart-description">Monthly values for all series, lag-aware signal scores, composite regime, and cumulative backtest performance ($10k starting value). Rows are color-coded by regime.</p>
                 </div>
 
                 <div class="data-controls">
-                    <select id="data-series-select">
-                        <option value="all">All Series</option>
-                        <option value="sp500">S&P 500</option>
-                        <option value="cape">Shiller CAPE</option>
-                        <option value="pie">P/IE (Integrated Equity)</option>
-                        <option value="unemployment">Unemployment Rate</option>
-                        <option value="cpi">CPI / Inflation</option>
-                        <option value="vix">VIX</option>
-                        <option value="allocation">Investor Equity Allocation</option>
-                        <option value="yieldcurve">Yield Curve (10Y-2Y)</option>
-                        <option value="strategy">Strategy Signals</option>
-                    </select>
                     <button id="download-csv" onclick="downloadCSV()">Download CSV</button>
                     <button id="copy-data" onclick="copyData()">Copy to Clipboard</button>
                 </div>

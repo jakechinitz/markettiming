@@ -90,139 +90,196 @@ async function loadAllData() {
 }
 
 // Data table population
-let dataTableInitialized = false;
 function populateDataTable() {
-    const select = document.getElementById('data-series-select');
-    if (!dataTableInitialized) {
-        select.addEventListener('change', () => renderDataTable(select.value));
-        dataTableInitialized = true;
-    }
-    renderDataTable(select.value);
+    renderUnifiedDataTable();
 }
 
-function renderDataTable(series) {
+function renderUnifiedDataTable() {
     const thead = document.getElementById('data-thead');
     const tbody = document.getElementById('data-tbody');
 
-    let columns = [];
-    let rows = [];
+    // Build monthly lookup maps for each series
+    const seriesDefs = [
+        { key: 'sp500', proc: 'sp500' },
+        { key: 'unemployment', proc: 'unemployment' },
+        { key: 'cpi', proc: 'cpi' },
+        { key: 'vix', proc: 'vix' },
+        { key: 'cape', proc: 'cape' },
+        { key: 'pie', proc: 'pie' },
+        { key: 'equityAlloc', proc: 'equityAlloc' },
+        { key: 'yieldCurve', proc: 'yieldCurve' },
+    ];
 
-    switch (series) {
-        case 'sp500': {
-            columns = ['Date', 'S&P 500', '200-Day MA'];
-            const data = DataStore.processed.sp500 || [];
-            rows = data.slice(-500).map(d => [
-                d.date,
-                d.value.toFixed(2),
-                d.ma200 !== null ? d.ma200.toFixed(2) : '\u2014',
-            ]);
-            break;
+    const monthlyMaps = {};
+    const allMonths = new Set();
+
+    seriesDefs.forEach(s => {
+        const data = DataStore.processed[s.proc] || [];
+        const monthly = DataStore.getMonthlyValues(data);
+        const map = {};
+        monthly.forEach(d => { map[d.date.substring(0, 7)] = d; });
+        monthlyMaps[s.key] = map;
+        monthly.forEach(d => allMonths.add(d.date.substring(0, 7)));
+    });
+
+    const sortedMonths = Array.from(allMonths).sort();
+    if (sortedMonths.length === 0) return;
+
+    // Pre-compute backtest stats for signal scoring
+    Strategy._backtestStats = null;
+
+    // Build rows with values, signals, and backtest
+    const columns = [
+        'Date', 'S&P 500', '200d MA',
+        'Unemp %', 'U MA12',
+        'CPI', 'Infl %',
+        'VIX', 'CAPE', 'P/IE',
+        'Eq Alloc %', 'YC 10-2',
+        'Trend', 'Unemp', 'VIX Sig', 'CAPE Sig', 'P/IE Sig', 'Alloc Sig', 'YC Sig',
+        'Score', 'Regime', 'Alloc %',
+        'Mo Return', 'Strategy', 'Buy&Hold',
+    ];
+
+    let strategyValue = 10000;
+    let buyHoldValue = 10000;
+    let prevSP = null;
+    const rows = [];
+
+    for (const ym of sortedMonths) {
+        const sp = monthlyMaps.sp500[ym];
+        const unemp = monthlyMaps.unemployment[ym];
+        const cpi = monthlyMaps.cpi[ym];
+        const vix = monthlyMaps.vix[ym];
+        const cape = monthlyMaps.cape[ym];
+        const pie = monthlyMaps.pie[ym];
+        const alloc = monthlyMaps.equityAlloc[ym];
+        const yc = monthlyMaps.yieldCurve[ym];
+
+        const dateStr = sp?.date || unemp?.date || cape?.date || (ym + '-01');
+
+        // Compute lagged score at this date
+        const lagged = Strategy.computeLaggedScore(dateStr);
+        const trendSignal = lagged.context.trend;
+
+        // Extract individual signals from lagged computation
+        // Re-derive each signal to display individually
+        let sigTrend = '', sigUnemp = '', sigVix = '', sigCape = '', sigPie = '', sigAlloc = '', sigYC = '';
+        let scoreStr = '', regimeStr = '', allocPctStr = '';
+
+        if (lagged.count > 0) {
+            // We need individual signals \u2014 re-derive from the data at this point
+            const spLag = DataStore.getLaggedValue('sp500', dateStr, CONFIG.PUB_LAG.SP500);
+            if (spLag && spLag.ma200 !== null) {
+                sigTrend = spLag.value > spLag.ma200 ? '+1' : '-1';
+            }
+
+            const unempLag = DataStore.getLaggedValue('unemployment', dateStr, CONFIG.PUB_LAG.UNEMPLOYMENT);
+            if (unempLag && unempLag.ma12 !== null) {
+                const gap = unempLag.value - unempLag.ma12;
+                sigUnemp = gap < 0 ? '+1' : (gap >= 0.5 ? '-2' : '-1');
+            }
+
+            if (!Strategy._backtestStats) {
+                Strategy._backtestStats = {
+                    alloc: DataStore.buildRollingStatsLookup('equityAlloc', 0),
+                    cape: DataStore.buildRollingStatsLookup('cape', 0),
+                    pie: DataStore.buildRollingStatsLookup('pie', 0),
+                    vixRolling: DataStore.buildRollingStatsLookup('vix', CONFIG.STRATEGY.VIX_ROLLING_MONTHS),
+                };
+            }
+
+            const vixLag = DataStore.getLaggedValue('vix', dateStr, CONFIG.PUB_LAG.VIX);
+            if (vixLag) {
+                const vixStats = Strategy._backtestStats.vixRolling[vixLag.date.substring(0, 7)];
+                if (vixStats) {
+                    const { signal } = Strategy.classifyByZScore(vixLag.value, vixStats);
+                    sigVix = signal > 0 ? '+1' : signal < 0 ? '-1' : '0';
+                }
+            }
+
+            const capeLag = DataStore.getLaggedValue('cape', dateStr, CONFIG.PUB_LAG.CAPE);
+            if (capeLag) {
+                const capeStats = Strategy._backtestStats.cape[capeLag.date.substring(0, 7)];
+                if (capeStats) {
+                    const { signal } = Strategy.classifyByZScore(capeLag.value, capeStats);
+                    sigCape = signal > 0 ? '+0.5' : signal < 0 ? '-0.5' : '0';
+                }
+            }
+
+            const pieLag = DataStore.getLaggedValue('pie', dateStr, CONFIG.PUB_LAG.PIE ?? CONFIG.PUB_LAG.CAPE);
+            if (pieLag) {
+                const pieStats = Strategy._backtestStats.pie[pieLag.date.substring(0, 7)];
+                if (pieStats) {
+                    const { signal } = Strategy.classifyByZScore(pieLag.value, pieStats);
+                    sigPie = signal > 0 ? '+0.5' : signal < 0 ? '-0.5' : '0';
+                }
+            }
+
+            const allocLag = DataStore.getLaggedValue('equityAlloc', dateStr, CONFIG.PUB_LAG.EQUITY_ALLOC);
+            if (allocLag) {
+                const allocStats = Strategy._backtestStats.alloc[allocLag.date.substring(0, 7)];
+                if (allocStats) {
+                    const { signal } = Strategy.classifyByZScore(allocLag.value, allocStats);
+                    sigAlloc = signal > 0 ? '+1' : signal < 0 ? '-1' : '0';
+                }
+            }
+
+            const ycLag = DataStore.getLaggedValue('yieldCurve', dateStr, CONFIG.PUB_LAG.YIELD_CURVE);
+            if (ycLag) {
+                sigYC = ycLag.value > CONFIG.STRATEGY.YIELD_CURVE_INVERSION ? '+1' : '-1';
+            }
+
+            scoreStr = lagged.score.toFixed(1);
+            const trend = trendSignal ?? 0;
+            regimeStr = Strategy.scoreToRegime(lagged.score, trend);
+            const allocFrac = Strategy.scoreToAllocation(lagged.score, trend, false);
+            allocPctStr = Math.round(allocFrac * 100) + '%';
         }
-        case 'cape': {
-            columns = ['Date', 'CAPE Ratio', 'Source'];
-            const data = DataStore.processed.cape || [];
-            rows = data.slice(-200).map(d => [
-                d.date,
-                d.value.toFixed(2),
-                d.nowcast ? 'Estimated' : 'Shiller',
-            ]);
-            break;
+
+        // Monthly return and cumulative backtest
+        let moReturnStr = '';
+        if (sp && prevSP && prevSP > 0) {
+            const ret = (sp.value - prevSP) / prevSP;
+            moReturnStr = (ret * 100).toFixed(2) + '%';
+
+            const allocFrac = lagged.count > 0
+                ? Strategy.scoreToAllocation(lagged.score, trendSignal ?? 0, false)
+                : 1;
+            strategyValue *= (1 + ret * allocFrac);
+            buyHoldValue *= (1 + ret);
         }
-        case 'pie': {
-            columns = ['Date', 'P/IE Ratio', 'Source'];
-            const data = DataStore.processed.pie || [];
-            rows = data.slice(-200).map(d => [
-                d.date,
-                d.value.toFixed(2),
-                d.nowcast ? 'Estimated' : 'Shiller/OSAM',
-            ]);
-            break;
-        }
-        case 'unemployment': {
-            columns = ['Date', 'Rate (%)', '12-Mo MA (%)', 'Source'];
-            const data = DataStore.processed.unemployment || [];
-            rows = data.slice(-200).map(d => [
-                d.date,
-                d.value.toFixed(1),
-                d.ma12 !== null ? d.ma12.toFixed(1) : '\u2014',
-                d.nowcast ? 'Nowcast' : 'FRED',
-            ]);
-            break;
-        }
-        case 'cpi': {
-            columns = ['Date', 'CPI', 'YoY Inflation (%)', 'Source'];
-            const data = DataStore.processed.cpi || [];
-            rows = data.filter(d => d.inflationRate !== null).slice(-200).map(d => [
-                d.date,
-                d.value.toFixed(1),
-                d.inflationRate.toFixed(2),
-                d.nowcast ? 'Nowcast' : 'FRED',
-            ]);
-            break;
-        }
-        case 'vix': {
-            columns = ['Date', 'VIX'];
-            const data = DataStore.processed.vix || [];
-            rows = data.slice(-500).map(d => [d.date, d.value.toFixed(2)]);
-            break;
-        }
-        case 'allocation': {
-            columns = ['Date', 'Equity Allocation (%)', 'Source'];
-            const data = DataStore.processed.equityAlloc || [];
-            rows = data.map(d => [d.date, d.value.toFixed(1), d.nowcast ? 'Nowcast' : 'FRED']);
-            break;
-        }
-        case 'yieldcurve': {
-            columns = ['Date', '10Y-2Y Spread (%)', '20-Day MA (%)'];
-            const data = DataStore.processed.yieldCurve || [];
-            rows = data.slice(-500).map(d => [
-                d.date,
-                d.value.toFixed(2),
-                d.ma20 !== null ? d.ma20.toFixed(2) : '\u2014',
-            ]);
-            break;
-        }
-        case 'strategy': {
-            columns = ['Indicator', 'Signal', 'Value'];
-            const signals = Strategy.computeSignals();
-            const items = [
-                ['Trend (200-Day MA)', signals.trend, signals.trendDetail],
-                ['Unemployment', signals.unemployment, signals.unemploymentDetail],
-                ['VIX', signals.vix, signals.vixDetail],
-                ['CAPE', signals.cape, signals.capeDetail],
-                ['P/IE', signals.pie, signals.pieDetail],
-                ['Allocation', signals.allocation, signals.allocationDetail],
-                ['Yield Curve', signals.yieldCurve, signals.yieldCurveDetail],
-                ['Composite', signals.composite, signals.regime],
-            ];
-            rows = items
-                .filter(r => r[1] !== undefined)
-                .map(r => [r[0], String(r[1]), r[2] || '']);
-            break;
-        }
-        default: {
-            // All series summary
-            columns = ['Series', 'Latest Date', 'Latest Value'];
-            const summaries = [
-                ['S&P 500', DataStore.getLatest('sp500')],
-                ['Unemployment', DataStore.getLatest('unemployment')],
-                ['CPI', DataStore.getLatest('cpi')],
-                ['VIX', DataStore.getLatest('vix')],
-                ['Equity Allocation', DataStore.getLatest('equityAlloc')],
-                ['Yield Curve (10Y-2Y)', DataStore.getLatest('yieldCurve')],
-                ['Shiller CAPE', DataStore.getLatest('cape')],
-                ['P/IE (Integrated Equity)', DataStore.getLatest('pie')],
-            ];
-            rows = summaries
-                .filter(s => s[1])
-                .map(s => [s[0], s[1].date, s[1].value.toFixed(2)]);
-        }
+        if (sp) prevSP = sp.value;
+
+        rows.push([
+            ym,
+            sp ? sp.value.toFixed(2) : '',
+            sp && sp.ma200 !== null ? sp.ma200.toFixed(2) : '',
+            unemp ? unemp.value.toFixed(1) : '',
+            unemp && unemp.ma12 !== null ? unemp.ma12.toFixed(1) : '',
+            cpi ? cpi.value.toFixed(1) : '',
+            cpi && cpi.inflationRate !== null ? cpi.inflationRate.toFixed(2) : '',
+            vix ? vix.value.toFixed(1) : '',
+            cape ? cape.value.toFixed(1) : '',
+            pie ? pie.value.toFixed(2) : '',
+            alloc ? alloc.value.toFixed(1) : '',
+            yc ? yc.value.toFixed(2) : '',
+            sigTrend, sigUnemp, sigVix, sigCape, sigPie, sigAlloc, sigYC,
+            scoreStr, regimeStr, allocPctStr,
+            moReturnStr,
+            sp ? '$' + strategyValue.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '',
+            sp ? '$' + buyHoldValue.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '',
+        ]);
     }
 
     thead.innerHTML = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
-    tbody.innerHTML = rows.map(r =>
-        '<tr>' + r.map(cell => `<td>${cell}</td>`).join('') + '</tr>'
-    ).join('');
+    tbody.innerHTML = rows.map(r => {
+        const regime = r[20];
+        let cls = '';
+        if (regime === 'Crisis') cls = ' class="row-crisis"';
+        else if (regime === 'Defensive') cls = ' class="row-defensive"';
+        else if (regime === 'Cautious') cls = ' class="row-cautious"';
+        return `<tr${cls}>` + r.map(cell => `<td>${cell}</td>`).join('') + '</tr>';
+    }).join('');
 }
 
 // CSV download

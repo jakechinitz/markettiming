@@ -488,7 +488,7 @@ main {
 .table-wrapper {
     overflow-x: auto;
     margin-top: 1rem;
-    max-height: 600px;
+    max-height: 80vh;
     overflow-y: auto;
 }
 
@@ -526,6 +526,22 @@ main {
 
 #data-table tbody tr:hover {
     background: var(--bg-input);
+}
+
+#data-table tbody tr.row-crisis {
+    background: rgba(248, 113, 113, 0.08);
+}
+
+#data-table tbody tr.row-defensive {
+    background: rgba(251, 191, 36, 0.06);
+}
+
+#data-table tbody tr.row-cautious {
+    background: rgba(251, 191, 36, 0.03);
+}
+
+#data-table td:empty {
+    background: rgba(45, 48, 72, 0.15);
 }
 
 /* === About Tab === */
