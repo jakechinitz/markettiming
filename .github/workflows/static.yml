@@ -41,8 +41,29 @@ jobs:
               -o "data/fred/${s}.csv" \
               || echo "WARNING: Failed to fetch $s"
           done
-          echo "Pre-fetched files:"
+          echo "Pre-fetched FRED files:"
           ls -la data/fred/
+      - name: Pre-fetch Yahoo Finance data
+        run: |
+          mkdir -p data/yahoo
+          PERIOD1=$(date -d "35 years ago" +%s)
+          PERIOD2=$(date +%s)
+          for SYMBOL in "^GSPC" "^VIX"; do
+            ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SYMBOL'))")
+            FILENAME=$(echo "$SYMBOL" | tr -d '^')
+            echo "Fetching $SYMBOL..."
+            curl -sf --retry 3 --retry-delay 5 --max-time 60 \
+              -H "User-Agent: Mozilla/5.0" \
+              "https://query1.finance.yahoo.com/v8/finance/chart/${ENCODED}?period1=${PERIOD1}&period2=${PERIOD2}&interval=1d&includeAdjustedClose=true" \
+              -o "data/yahoo/${FILENAME}.json" \
+              || curl -sf --retry 3 --retry-delay 5 --max-time 60 \
+                -H "User-Agent: Mozilla/5.0" \
+                "https://query2.finance.yahoo.com/v8/finance/chart/${ENCODED}?period1=${PERIOD1}&period2=${PERIOD2}&interval=1d&includeAdjustedClose=true" \
+                -o "data/yahoo/${FILENAME}.json" \
+              || echo "WARNING: Failed to fetch $SYMBOL"
+          done
+          echo "Pre-fetched Yahoo files:"
+          ls -la data/yahoo/
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact

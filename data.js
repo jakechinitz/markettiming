@@ -156,19 +156,50 @@ const DataStore = {
 
     // ─── Yahoo Finance fetcher (v8 chart — no crumb needed) ─────────
 
+    _parseYahooJson(json, symbol) {
+        const result = json?.chart?.result?.[0];
+        if (!result || !result.timestamp) throw new Error('No chart data');
+
+        const timestamps = result.timestamp;
+        const closes = result.indicators?.quote?.[0]?.close || [];
+        const adjCloses = result.indicators?.adjclose?.[0]?.adjclose || closes;
+
+        const data = [];
+        for (let i = 0; i < timestamps.length; i++) {
+            const val = adjCloses[i] ?? closes[i];
+            if (val == null || isNaN(val)) continue;
+            const d = new Date(timestamps[i] * 1000);
+            data.push({ date: d.toISOString().substring(0, 10), value: val });
+        }
+        if (data.length === 0) throw new Error('No valid data points');
+        console.log(`[Yahoo] ${symbol}: ${data.length} daily points (${data[0].date} → ${data[data.length-1].date})`);
+        return data;
+    },
+
     async fetchYahoo(symbol) {
+        const errors = [];
+
+        // Strategy 0: Pre-fetched static JSON (built by GitHub Actions, same-origin)
+        const filename = symbol.replace('^', '');
+        try {
+            const resp = await this._fetch(`data/yahoo/${filename}.json`, 5000);
+            if (resp.ok) {
+                const json = await resp.json();
+                return this._parseYahooJson(json, symbol);
+            }
+        } catch (err) {
+            errors.push(`static: ${err.message}`);
+        }
+
+        // Strategy 1: Live Yahoo v8 API (direct + proxied)
         const sym = encodeURIComponent(symbol);
-        // Use period1/period2 (not range=max) to guarantee daily granularity.
-        // range=max can silently return monthly data for long-history symbols like ^GSPC.
         const period1 = Math.floor((Date.now() - 35 * 365.25 * 86400000) / 1000);
         const period2 = Math.floor(Date.now() / 1000);
         const qs = `?period1=${period1}&period2=${period2}&interval=1d&includeAdjustedClose=true`;
-        // Try both Yahoo load-balancers, each direct then proxied
         const baseUrls = [
             `https://query1.finance.yahoo.com/v8/finance/chart/${sym}${qs}`,
             `https://query2.finance.yahoo.com/v8/finance/chart/${sym}${qs}`,
         ];
-        const errors = [];
         let json;
         for (const baseUrl of baseUrls) {
             const urls = [baseUrl, ...this.CORS_PROXIES.map(make => make(baseUrl))];
@@ -187,23 +218,7 @@ const DataStore = {
         }
         if (!json) throw new Error(`Yahoo failed for ${symbol}: ${errors.join(' | ')}`);
 
-        const result = json?.chart?.result?.[0];
-        if (!result || !result.timestamp) throw new Error('No chart data');
-
-        const timestamps = result.timestamp;
-        const closes = result.indicators?.quote?.[0]?.close || [];
-        const adjCloses = result.indicators?.adjclose?.[0]?.adjclose || closes;
-
-        const data = [];
-        for (let i = 0; i < timestamps.length; i++) {
-            const val = adjCloses[i] ?? closes[i];
-            if (val == null || isNaN(val)) continue;
-            const d = new Date(timestamps[i] * 1000);
-            data.push({ date: d.toISOString().substring(0, 10), value: val });
-        }
-        if (data.length === 0) throw new Error('No valid data points');
-        console.log(`[Yahoo] ${symbol}: ${data.length} daily points (${data[0].date} → ${data[data.length-1].date})`);
-        return data;
+        return this._parseYahooJson(json, symbol);
     },
 
     // ─── Shiller data fetcher (XLS primary, CSV fallback) ───────────
