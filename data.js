@@ -405,6 +405,10 @@ const DataStore = {
                 label: 'Yield Curve',
                 fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y, '1990-01-01'),
             },
+            fedFunds: {
+                label: 'Fed Funds Rate',
+                fn: () => this.fetchFred(CONFIG.SERIES.FEDFUNDS),
+            },
             shiller: {
                 label: 'Shiller Earnings/CAPE',
                 fn: () => this.fetchShillerData(),
@@ -428,6 +432,7 @@ const DataStore = {
             equityAlloc: 'FRED',
             icsa: 'FRED',
             yieldCurve: 'FRED',
+            fedFunds: 'FRED',
             shiller: 'Shiller/GitHub',
         };
 
@@ -468,6 +473,7 @@ const DataStore = {
             ['vix', () => this.processVIX()],
             ['equityAlloc', () => this.processEquityAllocation()],
             ['yieldCurve', () => this.processYieldCurve()],
+            ['fedFunds', () => this.processFedFunds()],
             ['cape', () => this.computeCAPE()],
             ['trailingPE', () => this.computeTrailingPE()],
             ['pie', () => this.computePIE()],
@@ -673,6 +679,12 @@ const DataStore = {
         });
 
         this.processed.yieldCurve = withMA;
+    },
+
+    processFedFunds() {
+        const data = this.raw.fedFunds || [];
+        if (data.length === 0) return;
+        this.processed.fedFunds = data.map(d => ({ date: d.date, value: d.value, nowcast: false }));
     },
 
     computeCAPE() {

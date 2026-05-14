@@ -33,7 +33,7 @@ jobs:
       - name: Pre-fetch FRED data
         run: |
           mkdir -p data/fred
-          SERIES="UNRATE CPIAUCSL BOGZ1FL153064486Q ICSA T10Y2Y"
+          SERIES="UNRATE CPIAUCSL BOGZ1FL153064486Q ICSA T10Y2Y FEDFUNDS"
           for s in $SERIES; do
             echo "Fetching $s..."
             TMP=$(mktemp)
