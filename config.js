@@ -19,6 +19,8 @@ const CONFIG = {
         ICSA: 'ICSA',
         // 10-Year minus 2-Year Treasury spread (yield curve)
         T10Y2Y: 'T10Y2Y',
+        // Effective Federal Funds Rate (monthly)
+        FEDFUNDS: 'FEDFUNDS',
     },
 
     // Publication lags in months (how long after the reference period
@@ -32,6 +34,7 @@ const CONFIG = {
         CAPE: 2,        // derived from S&P + CPI, so limited by CPI lag
         YIELD_CURVE: 0, // real-time daily data
         PIE: 2,         // same lag structure as CAPE (valuation uses CPI/earnings)
+        FED_FUNDS: 1,   // effective rate published ~1 month after reference month
     },
 
     // Chart colors

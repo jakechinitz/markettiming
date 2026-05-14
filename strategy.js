@@ -99,6 +99,29 @@ const Strategy = {
         return { signal, z };
     },
 
+    // Classify Fed policy stance by comparing rate to 3 months prior,
+    // cross-referenced with inflation and unemployment.
+    classifyFedPolicy(currentRate, priorRate, inflationRate, unempAboveMA) {
+        if (priorRate == null) return { signal: 0, stance: 'unknown' };
+        const change = currentRate - priorRate;
+        const isHiking = change > 0.10;
+        const isCutting = change < -0.10;
+
+        if (isHiking) {
+            if (inflationRate != null && inflationRate > 2) {
+                return { signal: -1, stance: `hiking (+${change.toFixed(2)}pp), inflation ${inflationRate.toFixed(1)}%` };
+            }
+            return { signal: 0, stance: `hiking (+${change.toFixed(2)}pp), low inflation` };
+        }
+        if (isCutting) {
+            if (unempAboveMA) {
+                return { signal: -0.5, stance: `cutting (${change.toFixed(2)}pp), unemp rising` };
+            }
+            return { signal: 1, stance: `cutting (${change.toFixed(2)}pp), unemp stable` };
+        }
+        return { signal: 0.5, stance: `holding (Δ${change.toFixed(2)}pp)` };
+    },
+
     // Core allocation model:
     //   Composite > 0                       → 100% equity (bullish)
     //   Composite ≤ 0, above 200d           →  80% equity (cautious, trend intact)
@@ -236,8 +259,23 @@ const Strategy = {
             signals.yieldCurveDetail = `10Y-2Y spread at ${yc.value.toFixed(2)}%`;
         }
 
+        // 8. Fed policy stance (1-month lag, cross-referenced with inflation + unemployment)
+        const fedFunds = DataStore.processed.fedFunds || [];
+        if (fedFunds.length > 3) {
+            const latest = fedFunds[fedFunds.length - 1];
+            const prior = fedFunds.length > 3 ? fedFunds[fedFunds.length - 4] : null;
+            const inflRate = (DataStore.getLatest('cpi') || {}).inflationRate;
+            const unempData = DataStore.getLatest('unemployment');
+            const unempRising = unempData && unempData.ma12 !== null && unempData.value > unempData.ma12;
+            const { signal, stance } = this.classifyFedPolicy(
+                latest.value, prior ? prior.value : null, inflRate, unempRising
+            );
+            signals.fedPolicy = signal;
+            signals.fedPolicyDetail = `Fed Funds ${latest.value.toFixed(2)}%: ${stance}`;
+        }
+
         // Composite score — CAPE/PIE half weight is baked into signal values (±0.5)
-        const components = ['trend', 'unemployment', 'vix', 'cape', 'pie', 'allocation', 'yieldCurve'];
+        const components = ['trend', 'unemployment', 'vix', 'cape', 'pie', 'allocation', 'yieldCurve', 'fedPolicy'];
         const validSignals = components.filter(c => signals[c] !== undefined);
         signals.composite = validSignals.reduce((sum, c) => sum + signals[c], 0);
         signals.maxPossible = validSignals.length;
@@ -289,6 +327,7 @@ const Strategy = {
             { name: 'Valuation (P/IE)', value: signals.pie, detail: signals.pieDetail, nowcast: false },
             { name: 'Investor Allocation', value: signals.allocation, detail: signals.allocationDetail, nowcast: signals.allocationNowcast },
             { name: 'Yield Curve', value: signals.yieldCurve, detail: signals.yieldCurveDetail, nowcast: false },
+            { name: 'Fed Policy', value: signals.fedPolicy, detail: signals.fedPolicyDetail, nowcast: false },
         ];
 
         let html = '';
@@ -433,6 +472,21 @@ const Strategy = {
         const yc = DataStore.getLaggedValue('yieldCurve', dateStr, CONFIG.PUB_LAG.YIELD_CURVE);
         if (yc) {
             score += yc.value > CONFIG.STRATEGY.YIELD_CURVE_INVERSION ? 1 : -1;
+            count++;
+        }
+
+        // 8. Fed policy (1 month lag — direction + macro context)
+        const fed = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS);
+        if (fed) {
+            const fedPrior = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS + 3);
+            const cpiLag = DataStore.getLaggedValue('cpi', dateStr, CONFIG.PUB_LAG.CPI);
+            const unempLag = DataStore.getLaggedValue('unemployment', dateStr, CONFIG.PUB_LAG.UNEMPLOYMENT);
+            const unempRising = unempLag && unempLag.ma12 !== null && unempLag.value > unempLag.ma12;
+            const inflRate = cpiLag ? cpiLag.inflationRate : null;
+            const { signal } = this.classifyFedPolicy(
+                fed.value, fedPrior ? fedPrior.value : null, inflRate, unempRising
+            );
+            score += signal;
             count++;
         }
 
@@ -691,7 +745,7 @@ const Strategy = {
                 <div class="stat-label">Buy & Hold Final Value</div>
                 <div class="stat-value">$${bhFinal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
             </div>
-            <p class="lag-note">Backtest uses publication-lagged data: S&P/VIX/yield curve real-time, unemployment 1mo, CPI 2mo, allocation 1mo, CAPE/P-IE 2mo.</p>
+            <p class="lag-note">Backtest uses publication-lagged data: S&P/VIX/yield curve real-time, unemployment/Fed Funds 1mo, CPI 2mo, allocation 1mo, CAPE/P-IE 2mo.</p>
             <p class="lag-note">Advanced toggles: ${activeToggleLabels.length ? activeToggleLabels.join(' | ') : 'None (base model only)'}</p>
         `;
     },

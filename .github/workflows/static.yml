@@ -4,12 +4,12 @@ on:
   push:
     branches: ["main"]
   schedule:
-    # Refresh FRED data daily at 6am UTC (after most FRED releases)
+    # Refresh pre-fetched data daily at 6am UTC (after most FRED releases)
     - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -33,16 +33,24 @@ jobs:
       - name: Pre-fetch FRED data
         run: |
           mkdir -p data/fred
-          SERIES="UNRATE CPIAUCSL BOGZ1FL153064486Q ICSA T10Y2Y"
+          SERIES="UNRATE CPIAUCSL BOGZ1FL153064486Q ICSA T10Y2Y FEDFUNDS"
           for s in $SERIES; do
             echo "Fetching $s..."
-            curl -sf --retry 3 --retry-delay 5 --max-time 30 \
+            TMP=$(mktemp)
+            if curl -sf --retry 3 --retry-delay 5 --max-time 30 \
               "https://fred.stlouisfed.org/graph/fredgraph.csv?id=${s}" \
-              -o "data/fred/${s}.csv" \
-              || echo "WARNING: Failed to fetch $s"
+              -o "$TMP" && [ -s "$TMP" ] && head -1 "$TMP" | grep -qi "DATE"; then
+              mv "$TMP" "data/fred/${s}.csv"
+              echo "  OK: $(wc -l < data/fred/${s}.csv) lines"
+            else
+              rm -f "$TMP"
+              if [ -f "data/fred/${s}.csv" ]; then
+                echo "  FETCH FAILED — keeping existing file ($(wc -l < data/fred/${s}.csv) lines)"
+              else
+                echo "  WARNING: No data for $s and no existing file"
+              fi
+            fi
           done
-          echo "Pre-fetched FRED files:"
-          ls -la data/fred/
       - name: Pre-fetch Yahoo Finance data
         run: |
           mkdir -p data/yahoo
@@ -52,18 +60,40 @@ jobs:
             ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SYMBOL'))")
             FILENAME=$(echo "$SYMBOL" | tr -d '^')
             echo "Fetching $SYMBOL..."
-            curl -sf --retry 3 --retry-delay 5 --max-time 60 \
-              -H "User-Agent: Mozilla/5.0" \
-              "https://query1.finance.yahoo.com/v8/finance/chart/${ENCODED}?period1=${PERIOD1}&period2=${PERIOD2}&interval=1d&includeAdjustedClose=true" \
-              -o "data/yahoo/${FILENAME}.json" \
-              || curl -sf --retry 3 --retry-delay 5 --max-time 60 \
+            FETCHED=false
+            for HOST in query1 query2; do
+              TMP=$(mktemp)
+              if curl -sf --retry 3 --retry-delay 5 --max-time 60 \
                 -H "User-Agent: Mozilla/5.0" \
-                "https://query2.finance.yahoo.com/v8/finance/chart/${ENCODED}?period1=${PERIOD1}&period2=${PERIOD2}&interval=1d&includeAdjustedClose=true" \
-                -o "data/yahoo/${FILENAME}.json" \
-              || echo "WARNING: Failed to fetch $SYMBOL"
+                "https://${HOST}.finance.yahoo.com/v8/finance/chart/${ENCODED}?period1=${PERIOD1}&period2=${PERIOD2}&interval=1d&includeAdjustedClose=true" \
+                -o "$TMP" && [ -s "$TMP" ] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d.get('chart',{}).get('result')" "$TMP"; then
+                mv "$TMP" "data/yahoo/${FILENAME}.json"
+                echo "  OK via ${HOST}: $(wc -c < data/yahoo/${FILENAME}.json) bytes"
+                FETCHED=true
+                break
+              else
+                rm -f "$TMP"
+              fi
+            done
+            if [ "$FETCHED" = false ]; then
+              if [ -f "data/yahoo/${FILENAME}.json" ]; then
+                echo "  FETCH FAILED — keeping existing file ($(wc -c < data/yahoo/${FILENAME}.json) bytes)"
+              else
+                echo "  WARNING: No data for $SYMBOL and no existing file"
+              fi
+            fi
           done
-          echo "Pre-fetched Yahoo files:"
-          ls -la data/yahoo/
+      - name: Commit pre-fetched data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ -f
+          if git diff --staged --quiet; then
+            echo "No data changes to commit"
+          else
+            git commit -m "chore: refresh pre-fetched market data"
+            git push
+          fi
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact

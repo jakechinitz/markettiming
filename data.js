@@ -85,12 +85,14 @@ const DataStore = {
 
         // Strategy 0: Pre-fetched static CSV (built by GitHub Actions, same-origin = no CORS)
         try {
-            const resp = await this._fetch(`data/fred/${seriesId}.csv`, 5000);
+            const resp = await this._fetch(`data/fred/${seriesId}.csv`, 3000);
             if (resp.ok) {
                 const csv = await resp.text();
-                const data = this._parseFredCsv(csv, seriesId);
-                if (startDate) return data.filter(d => d.date >= startDate);
-                return data;
+                if (csv.startsWith('DATE') || csv.startsWith('date')) {
+                    const data = this._parseFredCsv(csv, seriesId);
+                    if (startDate) return data.filter(d => d.date >= startDate);
+                    return data;
+                }
             }
         } catch (err) {
             errors.push(`static: ${err.message}`);
@@ -182,10 +184,13 @@ const DataStore = {
         // Strategy 0: Pre-fetched static JSON (built by GitHub Actions, same-origin)
         const filename = symbol.replace('^', '');
         try {
-            const resp = await this._fetch(`data/yahoo/${filename}.json`, 5000);
+            const resp = await this._fetch(`data/yahoo/${filename}.json`, 3000);
             if (resp.ok) {
-                const json = await resp.json();
-                return this._parseYahooJson(json, symbol);
+                const text = await resp.text();
+                if (text.startsWith('{')) {
+                    const json = JSON.parse(text);
+                    return this._parseYahooJson(json, symbol);
+                }
             }
         } catch (err) {
             errors.push(`static: ${err.message}`);
@@ -400,6 +405,10 @@ const DataStore = {
                 label: 'Yield Curve',
                 fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y, '1990-01-01'),
             },
+            fedFunds: {
+                label: 'Fed Funds Rate',
+                fn: () => this.fetchFred(CONFIG.SERIES.FEDFUNDS),
+            },
             shiller: {
                 label: 'Shiller Earnings/CAPE',
                 fn: () => this.fetchShillerData(),
@@ -423,6 +432,7 @@ const DataStore = {
             equityAlloc: 'FRED',
             icsa: 'FRED',
             yieldCurve: 'FRED',
+            fedFunds: 'FRED',
             shiller: 'Shiller/GitHub',
         };
 
@@ -463,6 +473,7 @@ const DataStore = {
             ['vix', () => this.processVIX()],
             ['equityAlloc', () => this.processEquityAllocation()],
             ['yieldCurve', () => this.processYieldCurve()],
+            ['fedFunds', () => this.processFedFunds()],
             ['cape', () => this.computeCAPE()],
             ['trailingPE', () => this.computeTrailingPE()],
             ['pie', () => this.computePIE()],
@@ -668,6 +679,12 @@ const DataStore = {
         });
 
         this.processed.yieldCurve = withMA;
+    },
+
+    processFedFunds() {
+        const data = this.raw.fedFunds || [];
+        if (data.length === 0) return;
+        this.processed.fedFunds = data.map(d => ({ date: d.date, value: d.value, nowcast: false }));
     },
 
     computeCAPE() {

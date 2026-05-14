@@ -108,6 +108,7 @@ function renderUnifiedDataTable() {
         { key: 'pie', proc: 'pie' },
         { key: 'equityAlloc', proc: 'equityAlloc' },
         { key: 'yieldCurve', proc: 'yieldCurve' },
+        { key: 'fedFunds', proc: 'fedFunds' },
     ];
 
     const monthlyMaps = {};
@@ -134,8 +135,8 @@ function renderUnifiedDataTable() {
         'Unemp %', 'U MA12',
         'CPI', 'Infl %',
         'VIX', 'CAPE', 'P/IE',
-        'Eq Alloc %', 'YC 10-2',
-        'Trend', 'Unemp', 'VIX Sig', 'CAPE Sig', 'P/IE Sig', 'Alloc Sig', 'YC Sig',
+        'Eq Alloc %', 'YC 10-2', 'Fed Rate',
+        'Trend', 'Unemp', 'VIX Sig', 'CAPE Sig', 'P/IE Sig', 'Alloc Sig', 'YC Sig', 'Fed Sig',
         'Score', 'Regime', 'Alloc %',
         'Mo Return', 'Strategy', 'Buy&Hold',
     ];
@@ -154,6 +155,7 @@ function renderUnifiedDataTable() {
         const pie = monthlyMaps.pie[ym];
         const alloc = monthlyMaps.equityAlloc[ym];
         const yc = monthlyMaps.yieldCurve[ym];
+        const fed = monthlyMaps.fedFunds[ym];
 
         const dateStr = sp?.date || unemp?.date || cape?.date || (ym + '-01');
 
@@ -163,7 +165,7 @@ function renderUnifiedDataTable() {
 
         // Extract individual signals from lagged computation
         // Re-derive each signal to display individually
-        let sigTrend = '', sigUnemp = '', sigVix = '', sigCape = '', sigPie = '', sigAlloc = '', sigYC = '';
+        let sigTrend = '', sigUnemp = '', sigVix = '', sigCape = '', sigPie = '', sigAlloc = '', sigYC = '', sigFed = '';
         let scoreStr = '', regimeStr = '', allocPctStr = '';
 
         if (lagged.count > 0) {
@@ -229,6 +231,19 @@ function renderUnifiedDataTable() {
                 sigYC = ycLag.value > CONFIG.STRATEGY.YIELD_CURVE_INVERSION ? '+1' : '-1';
             }
 
+            const fedLag = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS);
+            if (fedLag) {
+                const fedPrior = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS + 3);
+                const cpiLag = DataStore.getLaggedValue('cpi', dateStr, CONFIG.PUB_LAG.CPI);
+                const unempLagFed = DataStore.getLaggedValue('unemployment', dateStr, CONFIG.PUB_LAG.UNEMPLOYMENT);
+                const unempR = unempLagFed && unempLagFed.ma12 !== null && unempLagFed.value > unempLagFed.ma12;
+                const inflR = cpiLag ? cpiLag.inflationRate : null;
+                const { signal } = Strategy.classifyFedPolicy(
+                    fedLag.value, fedPrior ? fedPrior.value : null, inflR, unempR
+                );
+                sigFed = signal > 0 ? `+${signal}` : String(signal);
+            }
+
             scoreStr = lagged.score.toFixed(1);
             const trend = trendSignal ?? 0;
             regimeStr = Strategy.scoreToRegime(lagged.score, trend);
@@ -263,7 +278,8 @@ function renderUnifiedDataTable() {
             pie ? pie.value.toFixed(2) : '',
             alloc ? alloc.value.toFixed(1) : '',
             yc ? yc.value.toFixed(2) : '',
-            sigTrend, sigUnemp, sigVix, sigCape, sigPie, sigAlloc, sigYC,
+            fed ? fed.value.toFixed(2) : '',
+            sigTrend, sigUnemp, sigVix, sigCape, sigPie, sigAlloc, sigYC, sigFed,
             scoreStr, regimeStr, allocPctStr,
             moReturnStr,
             sp ? '$' + strategyValue.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '',
@@ -273,7 +289,7 @@ function renderUnifiedDataTable() {
 
     thead.innerHTML = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
     tbody.innerHTML = rows.map(r => {
-        const regime = r[20];
+        const regime = r[22];
         let cls = '';
         if (regime === 'Crisis') cls = ' class="row-crisis"';
         else if (regime === 'Defensive') cls = ' class="row-defensive"';
