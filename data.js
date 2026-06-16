@@ -5,11 +5,15 @@ const DataStore = {
     processed: {},
     status: {},
 
-    // CORS proxies — tried in order when direct fetch fails
+    // CORS proxies — tried in order when direct fetch fails.
+    // These free public proxies come and go; the pre-fetched static files
+    // (data/fred, data/yahoo) are the reliable same-origin path. Proxies are
+    // only a fallback for local dev or when static files are unavailable.
     CORS_PROXIES: [
         url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-        url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
         url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+        url => `https://thingproxy.freeboard.io/fetch/${url}`,
+        url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
     ],
 
     // Shiller data sources (XLS is primary/authoritative, CSV is fallback)
@@ -45,6 +49,32 @@ const DataStore = {
         throw new Error(errors.join(' | '));
     },
 
+    _sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    },
+
+    // Run async tasks with a concurrency cap so we don't overwhelm free CORS
+    // proxies (they rate-limit and reject most requests when hit all at once).
+    // Returns results aligned to the input order, Promise.allSettled style.
+    async _runLimited(tasks, limit = 3) {
+        const results = new Array(tasks.length);
+        let next = 0;
+        const worker = async () => {
+            while (next < tasks.length) {
+                const i = next++;
+                try {
+                    results[i] = { status: 'fulfilled', value: await tasks[i]() };
+                } catch (err) {
+                    results[i] = { status: 'rejected', reason: err };
+                }
+            }
+        };
+        const workers = [];
+        for (let w = 0; w < Math.min(limit, tasks.length); w++) workers.push(worker());
+        await Promise.all(workers);
+        return results;
+    },
+
     // ─── FRED fetcher (JSON API with key → CSV via proxy fallback) ──
 
     _getFredKeys() {
@@ -66,12 +96,16 @@ const DataStore = {
     },
 
     _parseFredCsv(csv, seriesId) {
-        const lines = csv.trim().split('\n');
+        const lines = csv.trim().split(/\r?\n/);
         if (lines.length < 2) throw new Error(`No CSV data for ${seriesId}`);
         const out = [];
         for (let i = 1; i < lines.length; i++) {
-            const [date, valueRaw] = lines[i].split(',');
+            const parts = lines[i].split(',');
+            const date = (parts[0] || '').trim();
+            const valueRaw = (parts[1] || '').trim();
             if (!date || !valueRaw || valueRaw === '.') continue;
+            // Skip if the first column isn't a date (guards against stray header/footer rows)
+            if (!/^\d{4}-\d{2}-\d{2}/.test(date)) continue;
             const value = parseFloat(valueRaw);
             if (isNaN(value)) continue;
             out.push({ date, value });
@@ -80,16 +114,26 @@ const DataStore = {
         return out;
     },
 
+    // Heuristic: does this text look like CSV data (vs. an HTML error page)?
+    _looksLikeCsv(text) {
+        const head = text.trimStart();
+        if (head.startsWith('<')) return false; // HTML error page
+        return head.includes(',') && /\d/.test(head.slice(0, 200));
+    },
+
     async fetchFred(seriesId, startDate) {
         const errors = [];
 
         // Strategy 0: Pre-fetched static CSV (built by GitHub Actions, same-origin = no CORS)
         try {
-            const resp = await this._fetch(`data/fred/${seriesId}.csv`, 3000);
+            const resp = await this._fetch(`data/fred/${seriesId}.csv`, 4000);
             if (resp.ok) {
                 const csv = await resp.text();
-                if (csv.startsWith('DATE') || csv.startsWith('date')) {
+                // FRED's CSV header is "observation_date,..." (older exports used "DATE").
+                // Accept anything that looks like CSV, not just a specific header.
+                if (this._looksLikeCsv(csv)) {
                     const data = this._parseFredCsv(csv, seriesId);
+                    console.log(`[FRED] ${seriesId} via pre-fetched static file (${data.length} pts)`);
                     if (startDate) return data.filter(d => d.date >= startDate);
                     return data;
                 }
@@ -137,19 +181,25 @@ const DataStore = {
             }
         }
 
-        // Strategy 3: FRED CSV endpoint via CORS proxy (no key needed)
+        // Strategy 3: FRED CSV endpoint via CORS proxy (no key needed).
+        // Retry each proxy once with backoff — proxies are flaky under load.
         const csvParams = new URLSearchParams({ id: seriesId });
         if (startDate) csvParams.set('cosd', startDate);
         const csvUrl = `https://fred.stlouisfed.org/graph/fredgraph.csv?${csvParams}`;
         for (const makeProxy of this.CORS_PROXIES) {
-            try {
-                const proxied = makeProxy(csvUrl);
-                console.log(`[FRED] ${seriesId} via CSV proxy`);
-                const resp = await this._fetch(proxied, 20000);
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                return this._parseFredCsv(await resp.text(), seriesId);
-            } catch (err) {
-                errors.push(`csv-proxy: ${err.message}`);
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    if (attempt > 0) await this._sleep(800 * attempt);
+                    const proxied = makeProxy(csvUrl);
+                    console.log(`[FRED] ${seriesId} via CSV proxy (attempt ${attempt + 1})`);
+                    const resp = await this._fetch(proxied, 20000);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const text = await resp.text();
+                    if (!this._looksLikeCsv(text)) throw new Error('not CSV (proxy error page?)');
+                    return this._parseFredCsv(text, seriesId);
+                } catch (err) {
+                    errors.push(`csv-proxy: ${err.message}`);
+                }
             }
         }
 
@@ -415,10 +465,11 @@ const DataStore = {
             },
         };
 
+        // Limit concurrency: free CORS proxies reject most requests when many
+        // fire at once. Throttling to a few at a time dramatically improves the
+        // success rate of the proxy fallback path.
         const keys = Object.keys(series);
-        const results = await Promise.allSettled(
-            keys.map(k => series[k].fn())
-        );
+        const results = await this._runLimited(keys.map(k => series[k].fn), 3);
 
         let loadedCount = 0;
         let failedCount = 0;

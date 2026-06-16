@@ -2,7 +2,12 @@ name: Deploy static content to Pages
 
 on:
   push:
-    branches: ["main"]
+    # Deploy whenever the live branch changes. Add your GitHub Pages source
+    # branch here if it differs.
+    branches:
+      - "main"
+      - "claude/improve-data-sources-ReJEW"
+      - "claude/financial-dashboard-HRwpo"
   schedule:
     # Refresh pre-fetched data daily at 6am UTC (after most FRED releases)
     - cron: '0 6 * * *'
