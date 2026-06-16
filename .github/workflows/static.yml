@@ -2,7 +2,12 @@ name: Deploy static content to Pages
 
 on:
   push:
-    branches: ["main"]
+    # Deploy whenever the live branch changes. Add your GitHub Pages source
+    # branch here if it differs.
+    branches:
+      - "main"
+      - "claude/improve-data-sources-ReJEW"
+      - "claude/financial-dashboard-HRwpo"
   schedule:
     # Refresh pre-fetched data daily at 6am UTC (after most FRED releases)
     - cron: '0 6 * * *'
@@ -83,7 +88,11 @@ jobs:
               fi
             fi
           done
+      # Persist a baseline copy of the data into the repo so future runs have a
+      # fallback if a live fetch fails. Never block the deploy on this — the
+      # artifact already contains the freshly fetched data either way.
       - name: Commit pre-fetched data
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -91,8 +100,10 @@ jobs:
           if git diff --staged --quiet; then
             echo "No data changes to commit"
           else
-            git commit -m "chore: refresh pre-fetched market data"
-            git push
+            git commit -m "chore: refresh pre-fetched market data [skip ci]"
+            # Explicit src:dst push works even from checkout's detached HEAD.
+            git push origin "HEAD:${{ github.ref_name }}" \
+              || echo "Push failed (enable Settings > Actions > Workflow permissions: Read and write). Deploy continues."
           fi
       - name: Setup Pages
         uses: actions/configure-pages@v5
