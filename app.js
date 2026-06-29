@@ -126,8 +126,20 @@ function renderUnifiedDataTable() {
     const sortedMonths = Array.from(allMonths).sort();
     if (sortedMonths.length === 0) return;
 
-    // Pre-compute backtest stats for signal scoring
-    Strategy._backtestStats = null;
+    // Pre-compute expanding-window z-score stats once. No look-ahead: each
+    // month's bands use only data up to that month.
+    Strategy._backtestStats = {
+        alloc: DataStore.buildRollingStatsLookup('equityAlloc', 0),
+        cape: DataStore.buildRollingStatsLookup('cape', 0),
+        pie: DataStore.buildRollingStatsLookup('pie', 0),
+        vixRolling: DataStore.buildRollingStatsLookup('vix', CONFIG.STRATEGY.VIX_ROLLING_MONTHS),
+    };
+    const fmtSig = v => (v === undefined || v === null) ? '' : (v > 0 ? `+${v}` : String(v));
+    const monthKeyOffset = (ym, delta) => {
+        const [y, m] = ym.split('-').map(Number);
+        const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+        return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+    };
 
     // Build rows with values, signals, and backtest
     const columns = [
@@ -144,6 +156,7 @@ function renderUnifiedDataTable() {
     let strategyValue = 10000;
     let buyHoldValue = 10000;
     let prevSP = null;
+    let prevAllocFrac = 1; // allocation carried into the month (decided last month)
     const rows = [];
 
     for (const ym of sortedMonths) {
@@ -157,116 +170,76 @@ function renderUnifiedDataTable() {
         const yc = monthlyMaps.yieldCurve[ym];
         const fed = monthlyMaps.fedFunds[ym];
 
-        const dateStr = sp?.date || unemp?.date || cape?.date || (ym + '-01');
-
-        // Compute lagged score at this date
-        const lagged = Strategy.computeLaggedScore(dateStr);
-        const trendSignal = lagged.context.trend;
-
-        // Extract individual signals from lagged computation
-        // Re-derive each signal to display individually
+        // Signals are computed from THIS row's own (contemporaneous) values so
+        // each row is internally consistent \u2014 the signal always matches the
+        // numbers shown in the same row. Z-score bands use expanding stats
+        // (data up to this month only), so there's still no look-ahead.
         let sigTrend = '', sigUnemp = '', sigVix = '', sigCape = '', sigPie = '', sigAlloc = '', sigYC = '', sigFed = '';
         let scoreStr = '', regimeStr = '', allocPctStr = '';
+        let scoreVal = 0, count = 0, trendNum = 0;
+        let allocFrac = prevAllocFrac;
 
-        if (lagged.count > 0) {
-            // We need individual signals \u2014 re-derive from the data at this point
-            const spLag = DataStore.getLaggedValue('sp500', dateStr, CONFIG.PUB_LAG.SP500);
-            if (spLag && spLag.ma200 !== null) {
-                sigTrend = spLag.value > spLag.ma200 ? '+1' : '-1';
-            }
+        if (sp && sp.ma200 !== null) {
+            const s = sp.value > sp.ma200 ? 1 : -1;
+            sigTrend = fmtSig(s); scoreVal += s; trendNum = s; count++;
+        }
+        if (unemp && unemp.ma12 !== null) {
+            const gap = unemp.value - unemp.ma12;
+            const s = gap < 0 ? 1 : (gap >= 0.5 ? -2 : -1);
+            sigUnemp = fmtSig(s); scoreVal += s; count++;
+        }
+        if (vix) {
+            const st = Strategy._backtestStats.vixRolling[ym];
+            if (st) { const { signal } = Strategy.classifyByZScore(vix.value, st); sigVix = fmtSig(signal); scoreVal += signal; count++; }
+        }
+        if (cape) {
+            const st = Strategy._backtestStats.cape[ym];
+            if (st) { const { signal } = Strategy.classifyByZScore(cape.value, st); const v = signal * 0.5; sigCape = fmtSig(v); scoreVal += v; count++; }
+        }
+        if (pie) {
+            const st = Strategy._backtestStats.pie[ym];
+            if (st) { const { signal } = Strategy.classifyByZScore(pie.value, st); const v = signal * 0.5; sigPie = fmtSig(v); scoreVal += v; count++; }
+        }
+        if (alloc) {
+            const st = Strategy._backtestStats.alloc[ym];
+            if (st) { const { signal } = Strategy.classifyByZScore(alloc.value, st); sigAlloc = fmtSig(signal); scoreVal += signal; count++; }
+        }
+        if (yc) {
+            const s = yc.value > CONFIG.STRATEGY.YIELD_CURVE_INVERSION ? 1 : -1;
+            sigYC = fmtSig(s); scoreVal += s; count++;
+        }
+        if (fed) {
+            const fedPrior = monthlyMaps.fedFunds[monthKeyOffset(ym, -3)];
+            const inflR = cpi ? cpi.inflationRate : null;
+            const unempR = unemp && unemp.ma12 !== null && unemp.value > unemp.ma12;
+            const { signal } = Strategy.classifyFedPolicy(fed.value, fedPrior ? fedPrior.value : null, inflR, unempR);
+            sigFed = fmtSig(signal); scoreVal += signal; count++;
+        }
 
-            const unempLag = DataStore.getLaggedValue('unemployment', dateStr, CONFIG.PUB_LAG.UNEMPLOYMENT);
-            if (unempLag && unempLag.ma12 !== null) {
-                const gap = unempLag.value - unempLag.ma12;
-                sigUnemp = gap < 0 ? '+1' : (gap >= 0.5 ? '-2' : '-1');
-            }
-
-            if (!Strategy._backtestStats) {
-                Strategy._backtestStats = {
-                    alloc: DataStore.buildRollingStatsLookup('equityAlloc', 0),
-                    cape: DataStore.buildRollingStatsLookup('cape', 0),
-                    pie: DataStore.buildRollingStatsLookup('pie', 0),
-                    vixRolling: DataStore.buildRollingStatsLookup('vix', CONFIG.STRATEGY.VIX_ROLLING_MONTHS),
-                };
-            }
-
-            const vixLag = DataStore.getLaggedValue('vix', dateStr, CONFIG.PUB_LAG.VIX);
-            if (vixLag) {
-                const vixStats = Strategy._backtestStats.vixRolling[vixLag.date.substring(0, 7)];
-                if (vixStats) {
-                    const { signal } = Strategy.classifyByZScore(vixLag.value, vixStats);
-                    sigVix = signal > 0 ? '+1' : signal < 0 ? '-1' : '0';
-                }
-            }
-
-            const capeLag = DataStore.getLaggedValue('cape', dateStr, CONFIG.PUB_LAG.CAPE);
-            if (capeLag) {
-                const capeStats = Strategy._backtestStats.cape[capeLag.date.substring(0, 7)];
-                if (capeStats) {
-                    const { signal } = Strategy.classifyByZScore(capeLag.value, capeStats);
-                    sigCape = signal > 0 ? '+0.5' : signal < 0 ? '-0.5' : '0';
-                }
-            }
-
-            const pieLag = DataStore.getLaggedValue('pie', dateStr, CONFIG.PUB_LAG.PIE ?? CONFIG.PUB_LAG.CAPE);
-            if (pieLag) {
-                const pieStats = Strategy._backtestStats.pie[pieLag.date.substring(0, 7)];
-                if (pieStats) {
-                    const { signal } = Strategy.classifyByZScore(pieLag.value, pieStats);
-                    sigPie = signal > 0 ? '+0.5' : signal < 0 ? '-0.5' : '0';
-                }
-            }
-
-            const allocLag = DataStore.getLaggedValue('equityAlloc', dateStr, CONFIG.PUB_LAG.EQUITY_ALLOC);
-            if (allocLag) {
-                const allocStats = Strategy._backtestStats.alloc[allocLag.date.substring(0, 7)];
-                if (allocStats) {
-                    const { signal } = Strategy.classifyByZScore(allocLag.value, allocStats);
-                    sigAlloc = signal > 0 ? '+1' : signal < 0 ? '-1' : '0';
-                }
-            }
-
-            const ycLag = DataStore.getLaggedValue('yieldCurve', dateStr, CONFIG.PUB_LAG.YIELD_CURVE);
-            if (ycLag) {
-                sigYC = ycLag.value > CONFIG.STRATEGY.YIELD_CURVE_INVERSION ? '+1' : '-1';
-            }
-
-            const fedLag = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS);
-            if (fedLag) {
-                const fedPrior = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS + 3);
-                const cpiLag = DataStore.getLaggedValue('cpi', dateStr, CONFIG.PUB_LAG.CPI);
-                const unempLagFed = DataStore.getLaggedValue('unemployment', dateStr, CONFIG.PUB_LAG.UNEMPLOYMENT);
-                const unempR = unempLagFed && unempLagFed.ma12 !== null && unempLagFed.value > unempLagFed.ma12;
-                const inflR = cpiLag ? cpiLag.inflationRate : null;
-                const { signal } = Strategy.classifyFedPolicy(
-                    fedLag.value, fedPrior ? fedPrior.value : null, inflR, unempR
-                );
-                sigFed = signal > 0 ? `+${signal}` : String(signal);
-            }
-
-            scoreStr = lagged.score.toFixed(1);
-            const trend = trendSignal ?? 0;
-            regimeStr = Strategy.scoreToRegime(lagged.score, trend);
-            const allocFrac = Strategy.scoreToAllocation(lagged.score, trend, false);
+        if (count > 0) {
+            scoreStr = scoreVal.toFixed(1);
+            regimeStr = Strategy.scoreToRegime(scoreVal, trendNum);
+            allocFrac = Strategy.scoreToAllocation(scoreVal, trendNum, false);
             allocPctStr = Math.round(allocFrac * 100) + '%';
         }
 
-        // Monthly return and cumulative backtest
+        // Cumulative backtest: the allocation decided from the PRIOR month's
+        // signals earns this month's return (no look-ahead).
         let moReturnStr = '';
         if (sp && prevSP && prevSP > 0) {
             const ret = (sp.value - prevSP) / prevSP;
             moReturnStr = (ret * 100).toFixed(2) + '%';
-
-            const allocFrac = lagged.count > 0
-                ? Strategy.scoreToAllocation(lagged.score, trendSignal ?? 0, false)
-                : 1;
-            strategyValue *= (1 + ret * allocFrac);
+            strategyValue *= (1 + ret * prevAllocFrac);
             buyHoldValue *= (1 + ret);
         }
         if (sp) prevSP = sp.value;
+        if (count > 0) prevAllocFrac = allocFrac;
+
+        // Mark a row with ⦾ when any of its values is a nowcast estimate.
+        const nowcastRow = [sp, unemp, cpi, vix, cape, pie, alloc, yc, fed].some(d => d && d.nowcast);
 
         rows.push([
-            ym,
+            nowcastRow ? ym + ' ⦾' : ym,
             sp ? sp.value.toFixed(2) : '',
             sp && sp.ma200 !== null ? sp.ma200.toFixed(2) : '',
             unemp ? unemp.value.toFixed(1) : '',
@@ -285,29 +258,6 @@ function renderUnifiedDataTable() {
             sp ? '$' + strategyValue.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '',
             sp ? '$' + buyHoldValue.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '',
         ]);
-    }
-
-    // Make the most recent row reflect the nowcast (freshest) score, matching
-    // the Current Signals card and the strategy chart's tip. Historical rows
-    // stay strictly lag-aware so the backtest has no look-ahead.
-    if (rows.length) {
-        const cur = Strategy.computeSignals();
-        if (typeof cur.composite === 'number') {
-            const fmt = v => (v === undefined || v === null) ? '' : (v > 0 ? `+${v}` : String(v));
-            const r = rows[rows.length - 1];
-            r[0] = r[0] + ' ⦾';                 // mark date with nowcast glyph
-            r[13] = fmt(cur.trend);
-            r[14] = fmt(cur.unemployment);
-            r[15] = fmt(cur.vix);
-            r[16] = fmt(cur.cape);
-            r[17] = fmt(cur.pie);
-            r[18] = fmt(cur.allocation);
-            r[19] = fmt(cur.yieldCurve);
-            r[20] = fmt(cur.fedPolicy);
-            r[21] = cur.composite.toFixed(1);
-            r[22] = cur.regime || r[22];
-            r[23] = (cur.equityPctBase != null ? cur.equityPctBase : '') + '%';
-        }
     }
 
     thead.innerHTML = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';

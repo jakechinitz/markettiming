@@ -236,7 +236,7 @@
             <section class="data-section">
                 <div class="chart-header">
                     <h2>Complete Data & Backtest</h2>
-                    <p class="chart-description">Monthly values for all series, lag-aware signal scores, composite regime, and cumulative backtest performance ($10k starting value). Rows are color-coded by regime. The most recent row (marked ⦾) uses the latest nowcast estimates rather than lagged data.</p>
+                    <p class="chart-description">Monthly values for all series with each indicator's signal computed from that same row's values (point-in-time; z-score bands use only data up to that month, so no look-ahead). Composite, regime, target allocation, and a cumulative backtest ($10k start) where the prior month's allocation earns the current month's return. Rows are color-coded by regime; rows containing a nowcast estimate are marked ⦾. Note: this is a point-in-time view — the Strategy tab's backtest additionally applies publication lags, so its curve differs slightly.</p>
                 </div>
 
                 <div class="data-controls">
