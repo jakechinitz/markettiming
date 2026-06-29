@@ -287,7 +287,8 @@ function renderUnifiedDataTable() {
             lFed ? lFed.value.toFixed(2) : '',
             fmtSig(cur.trend), fmtSig(cur.unemployment), fmtSig(cur.vix), fmtSig(cur.cape),
             fmtSig(cur.pie), fmtSig(cur.allocation), fmtSig(cur.yieldCurve), fmtSig(cur.fedPolicy),
-            cur.composite.toFixed(1), cur.regime || '', (cur.equityPctBase != null ? cur.equityPctBase : '') + '%',
+            cur.composite.toFixed(1), cur.regime || '',
+            Math.round(Strategy.scoreToAllocation(cur.composite, cur.trend ?? 0, false) * 100) + '%',
             '', '', '',
         ]);
     }
