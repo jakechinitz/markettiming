@@ -80,7 +80,7 @@
                 <div class="chart-header">
                     <h2>4. Unemployment Rate & Moving Average</h2>
                     <p class="chart-description">When unemployment crosses above its 12-month moving average, recessions often follow (Sahm Rule variant).</p>
-                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/UNRATE" target="_blank" rel="noopener noreferrer">FRED (UNRATE)</a> · Nowcast via <a href="https://fred.stlouisfed.org/series/ICSA" target="_blank" rel="noopener noreferrer">FRED (ICSA)</a></div>
+                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/UNRATE" target="_blank" rel="noopener noreferrer">FRED (UNRATE)</a> · Nowcast via <a href="https://fred.stlouisfed.org/series/ICSA" target="_blank" rel="noopener noreferrer">FRED (ICSA)</a> + <a href="https://fred.stlouisfed.org/series/CCSA" target="_blank" rel="noopener noreferrer">FRED (CCSA)</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-unemployment"></canvas>
@@ -152,7 +152,7 @@
                                 <span class="rule-desc">S&P 500 above 200-day MA → +1, below → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">2. Unemployment Trend <span class="nowcast-badge">1mo lag, nowcast via ICSA</span></span>
+                                <span class="rule-name">2. Unemployment Trend <span class="nowcast-badge">1mo lag, nowcast via ICSA+CCSA</span></span>
                                 <span class="rule-desc">Below 12-mo MA → +1, above → -1, materially above (≥0.5pp) → -2</span>
                             </div>
                             <div class="rule">
@@ -317,7 +317,7 @@
                     <h3>Nowcasting & Publication Lags</h3>
                     <p>FRED data has significant publication lags. To provide the most current signal, this dashboard <strong>nowcasts</strong> lagged series:</p>
                     <p><strong>Equity Allocation:</strong> FRED's Z.1 data lags ~3 months. We estimate current allocation by applying S&P 500 price changes to the last known reading: if equities were X% of the portfolio and the S&P moved by Y%, the new equity share is recomputed assuming non-equity assets are unchanged.</p>
-                    <p><strong>Unemployment:</strong> Released ~1 month after reference. We use weekly Initial Jobless Claims (ICSA) to estimate the direction and magnitude of the next reading.</p>
+                    <p><strong>Unemployment:</strong> Released ~1 month after reference. We blend two weekly jobless-claims series to estimate the next reading: Initial Claims (ICSA, a flow — weighted 40%) and Continued Claims (CCSA, the insured-unemployment level, which tracks the headline rate more closely — weighted 60%). Each is converted to a rate change via a labor-force-based sensitivity and the one-month move is capped at ±0.5pp so weekly noise can't fabricate spikes.</p>
                     <p><strong>CPI:</strong> Released ~2 months after reference. We extrapolate using the 3-month average month-over-month trend.</p>
                     <p>Nowcast points appear as <span style="color:#ff79c6">dashed pink lines</span> on charts and are labeled in the strategy signals.</p>
                 </div>
