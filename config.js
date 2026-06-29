@@ -15,8 +15,10 @@ const CONFIG = {
         VIXCLS: 'VIXCLS',
         // Household equity allocation — directly/indirectly held equities as % of financial assets
         EQUITY_ALLOC: 'BOGZ1FL153064486Q',
-        // Initial Jobless Claims (weekly) — leading indicator for unemployment
+        // Initial Jobless Claims (weekly) — leading flow indicator for unemployment
         ICSA: 'ICSA',
+        // Continued Claims / Insured Unemployment (weekly) — tracks the level
+        CCSA: 'CCSA',
         // 10-Year minus 2-Year Treasury spread (yield curve)
         T10Y2Y: 'T10Y2Y',
         // Effective Federal Funds Rate (monthly)

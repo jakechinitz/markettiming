@@ -80,7 +80,7 @@
                 <div class="chart-header">
                     <h2>4. Unemployment Rate & Moving Average</h2>
                     <p class="chart-description">When unemployment crosses above its 12-month moving average, recessions often follow (Sahm Rule variant).</p>
-                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/UNRATE" target="_blank" rel="noopener noreferrer">FRED (UNRATE)</a> · Nowcast via <a href="https://fred.stlouisfed.org/series/ICSA" target="_blank" rel="noopener noreferrer">FRED (ICSA)</a></div>
+                    <div class="source-link">Source: <a href="https://fred.stlouisfed.org/series/UNRATE" target="_blank" rel="noopener noreferrer">FRED (UNRATE)</a> · Nowcast via <a href="https://fred.stlouisfed.org/series/ICSA" target="_blank" rel="noopener noreferrer">FRED (ICSA)</a> + <a href="https://fred.stlouisfed.org/series/CCSA" target="_blank" rel="noopener noreferrer">FRED (CCSA)</a></div>
                 </div>
                 <div class="chart-container">
                     <canvas id="chart-unemployment"></canvas>
@@ -152,7 +152,7 @@
                                 <span class="rule-desc">S&P 500 above 200-day MA → +1, below → -1</span>
                             </div>
                             <div class="rule">
-                                <span class="rule-name">2. Unemployment Trend <span class="nowcast-badge">1mo lag, nowcast via ICSA</span></span>
+                                <span class="rule-name">2. Unemployment Trend <span class="nowcast-badge">1mo lag, nowcast via ICSA+CCSA</span></span>
                                 <span class="rule-desc">Below 12-mo MA → +1, above → -1, materially above (≥0.5pp) → -2</span>
                             </div>
                             <div class="rule">
@@ -236,7 +236,7 @@
             <section class="data-section">
                 <div class="chart-header">
                     <h2>Complete Data & Backtest</h2>
-                    <p class="chart-description">Monthly values for all series, lag-aware signal scores, composite regime, and cumulative backtest performance ($10k starting value). Rows are color-coded by regime.</p>
+                    <p class="chart-description">Confirmed monthly data with lag-aware signals: each row's signal/score uses only data that would have been <em>published</em> by that month (publication lags), so there's no look-ahead. The allocation shown each month is applied to the <em>following</em> month's return in the cumulative backtest ($10k start). Rows are color-coded by regime. The final <strong>Now ⦾</strong> row is the only place nowcast (current-estimate) data is used — it's the live rating, not part of the backtest.</p>
                 </div>
 
                 <div class="data-controls">
@@ -317,7 +317,7 @@
                     <h3>Nowcasting & Publication Lags</h3>
                     <p>FRED data has significant publication lags. To provide the most current signal, this dashboard <strong>nowcasts</strong> lagged series:</p>
                     <p><strong>Equity Allocation:</strong> FRED's Z.1 data lags ~3 months. We estimate current allocation by applying S&P 500 price changes to the last known reading: if equities were X% of the portfolio and the S&P moved by Y%, the new equity share is recomputed assuming non-equity assets are unchanged.</p>
-                    <p><strong>Unemployment:</strong> Released ~1 month after reference. We use weekly Initial Jobless Claims (ICSA) to estimate the direction and magnitude of the next reading.</p>
+                    <p><strong>Unemployment:</strong> Released ~1 month after reference. We blend two weekly jobless-claims series to estimate the next reading: Initial Claims (ICSA, a flow — weighted 40%) and Continued Claims (CCSA, the insured-unemployment level, which tracks the headline rate more closely — weighted 60%). Each is converted to a rate change via a labor-force-based sensitivity and the one-month move is capped at ±0.5pp so weekly noise can't fabricate spikes.</p>
                     <p><strong>CPI:</strong> Released ~2 months after reference. We extrapolate using the 3-month average month-over-month trend.</p>
                     <p>Nowcast points appear as <span style="color:#ff79c6">dashed pink lines</span> on charts and are labeled in the strategy signals.</p>
                 </div>
@@ -332,7 +332,7 @@
                 <div class="about-card">
                     <h3>Data Sources</h3>
                     <p><strong>Market Data (S&P 500, VIX):</strong> <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> v8 chart API — daily data going back to 1990 (S&P 500) and 1990 (VIX).</p>
-                    <p><strong>Economic Data (Unemployment, CPI, Yield Curve, Initial Claims, Equity Allocation):</strong> <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> API with CSV fallback — full history (some series back to 1940s).</p>
+                    <p><strong>Economic Data (Unemployment, CPI, Fed Funds Rate, Yield Curve, Initial &amp; Continued Claims, Equity Allocation):</strong> <a href="https://fred.stlouisfed.org/" target="_blank">FRED</a> API with CSV fallback — full history (some series back to 1940s).</p>
                     <p><strong>Historical Earnings &amp; CAPE:</strong> <a href="http://www.econ.yale.edu/~shiller/data.htm" target="_blank">Robert Shiller (Yale)</a> ie_data.xls — monthly data from 1871, includes earnings, dividends, CPI, and CAPE. Falls back to <a href="https://github.com/datasets/s-and-p-500" target="_blank">GitHub CSV mirror</a>.</p>
                 </div>
             </section>

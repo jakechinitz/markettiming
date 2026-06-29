@@ -451,6 +451,10 @@ const DataStore = {
                 label: 'Initial Claims',
                 fn: () => this.fetchFred(CONFIG.SERIES.ICSA),
             },
+            ccsa: {
+                label: 'Continued Claims',
+                fn: () => this.fetchFred(CONFIG.SERIES.CCSA),
+            },
             yieldCurve: {
                 label: 'Yield Curve',
                 fn: () => this.fetchFred(CONFIG.SERIES.T10Y2Y, '1990-01-01'),
@@ -482,6 +486,7 @@ const DataStore = {
             cpi: 'FRED',
             equityAlloc: 'FRED',
             icsa: 'FRED',
+            ccsa: 'FRED',
             yieldCurve: 'FRED',
             fedFunds: 'FRED',
             shiller: 'Shiller/GitHub',
@@ -576,41 +581,66 @@ const DataStore = {
             return { date: d.date, value: d.value, ma12: ma, nowcast: false };
         });
 
-        // Nowcast: use Initial Claims to estimate next unemployment reading
+        // Nowcast: blend Initial Claims (ICSA, a flow) and Continued Claims
+        // (CCSA, the insured-unemployment level) to estimate next month's rate.
         const icsa = this.raw.icsa || [];
-        if (icsa.length > 0 && withMA.length > 0) {
+        const ccsa = this.raw.ccsa || [];
+        if (withMA.length > 0 && (icsa.length > 0 || ccsa.length > 0)) {
             const lastUnemp = withMA[withMA.length - 1];
             const lastUnempDate = new Date(lastUnemp.date);
-            const recentClaims = icsa.filter(d => new Date(d.date) > lastUnempDate);
 
-            if (recentClaims.length >= 2) {
-                const claimsValues = recentClaims.slice(-4).map(d => d.value);
-                const recentClaimsMA = claimsValues.reduce((s, v) => s + v, 0) / claimsValues.length;
-
-                const priorClaims = icsa.filter(d => {
+            // Change in a weekly series: recent (post-month, last 4 wks) average
+            // minus the prior ~5-week average up to the last confirmed month.
+            const weeklyTrend = (series) => {
+                const recent = series.filter(d => new Date(d.date) > lastUnempDate);
+                if (recent.length < 2) return null;
+                const rv = recent.slice(-4).map(d => d.value);
+                const recentMA = rv.reduce((s, v) => s + v, 0) / rv.length;
+                const prior = series.filter(d => {
                     const dd = new Date(d.date);
                     return dd <= lastUnempDate && dd >= new Date(lastUnempDate.getTime() - 35 * 86400000);
                 });
-                if (priorClaims.length > 0) {
-                    const priorClaimsMA = priorClaims.reduce((s, d) => s + d.value, 0) / priorClaims.length;
-                    const claimsChange = recentClaimsMA - priorClaimsMA;
-                    const unempDelta = claimsChange / 20000;
+                if (prior.length === 0) return null;
+                const priorMA = prior.reduce((s, d) => s + d.value, 0) / prior.length;
+                return recentMA - priorMA;
+            };
 
-                    const nowcastValue = Math.max(0, lastUnemp.value + unempDelta);
-                    const nowcastDate = new Date(lastUnempDate);
-                    nowcastDate.setMonth(nowcastDate.getMonth() + 1);
+            // Per-1pp sensitivities (weekly-claims change that implies +1pp).
+            //  ICSA (flow): a sustained ΔC adds ~4.3·ΔC to monthly inflows;
+            //    against a ~168M labor force ≈ ΔC / 390,000 pp.
+            //  CCSA (level): change in insured unemployed ≈ Δ in unemployed,
+            //    but insured cover only ~25% of the unemployed, so scale up:
+            //    (ΔCCSA/168e6)·(1/0.25) ≈ ΔCCSA / 420,000 pp.
+            const ICSA_PER_PP = 390000;
+            const CCSA_PER_PP = 420000;
 
-                    const recentValues = withMA.slice(-(maPeriod - 1)).map(d => d.value);
-                    recentValues.push(nowcastValue);
-                    const nowcastMA = recentValues.reduce((s, v) => s + v, 0) / recentValues.length;
+            const icsaChange = icsa.length ? weeklyTrend(icsa) : null;
+            const ccsaChange = ccsa.length ? weeklyTrend(ccsa) : null;
 
-                    withMA.push({
-                        date: nowcastDate.toISOString().substring(0, 10),
-                        value: parseFloat(nowcastValue.toFixed(1)),
-                        ma12: parseFloat(nowcastMA.toFixed(2)),
-                        nowcast: true,
-                    });
-                }
+            // Weighted blend — CCSA tracks the level better, so weight it higher.
+            const parts = [];
+            if (icsaChange !== null) parts.push({ d: icsaChange / ICSA_PER_PP, w: 0.4 });
+            if (ccsaChange !== null) parts.push({ d: ccsaChange / CCSA_PER_PP, w: 0.6 });
+
+            if (parts.length > 0) {
+                const wSum = parts.reduce((s, p) => s + p.w, 0);
+                let unempDelta = parts.reduce((s, p) => s + p.d * p.w, 0) / wSum;
+                unempDelta = Math.max(-0.5, Math.min(0.5, unempDelta)); // cap one-month move
+
+                const nowcastValue = Math.max(0, lastUnemp.value + unempDelta);
+                const nowcastDate = new Date(lastUnempDate);
+                nowcastDate.setMonth(nowcastDate.getMonth() + 1);
+
+                const recentValues = withMA.slice(-(maPeriod - 1)).map(d => d.value);
+                recentValues.push(nowcastValue);
+                const nowcastMA = recentValues.reduce((s, v) => s + v, 0) / recentValues.length;
+
+                withMA.push({
+                    date: nowcastDate.toISOString().substring(0, 10),
+                    value: parseFloat(nowcastValue.toFixed(1)),
+                    ma12: parseFloat(nowcastMA.toFixed(2)),
+                    nowcast: true,
+                });
             }
         }
 
