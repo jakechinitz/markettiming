@@ -594,7 +594,16 @@ const DataStore = {
                 if (priorClaims.length > 0) {
                     const priorClaimsMA = priorClaims.reduce((s, d) => s + d.value, 0) / priorClaims.length;
                     const claimsChange = recentClaimsMA - priorClaimsMA;
-                    const unempDelta = claimsChange / 20000;
+                    // Translate a change in weekly initial claims into an estimated
+                    // change in the unemployment rate. A sustained rise of ΔC weekly
+                    // claims adds ~4.3·ΔC to monthly inflows; against a ~168M labor
+                    // force that's ΔC·4.3/168e6 in rate terms ≈ ΔC / 390,000 pp.
+                    // (The old divisor of 20,000 was ~20× too sensitive, so routine
+                    // weekly noise produced ~1pp nowcast spikes.) Cap the one-month
+                    // move so noise can't fabricate large jumps.
+                    const CLAIMS_PER_PP = 390000; // weekly-claims change per 1pp of unemployment
+                    let unempDelta = claimsChange / CLAIMS_PER_PP;
+                    unempDelta = Math.max(-0.5, Math.min(0.5, unempDelta));
 
                     const nowcastValue = Math.max(0, lastUnemp.value + unempDelta);
                     const nowcastDate = new Date(lastUnempDate);
