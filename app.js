@@ -287,6 +287,29 @@ function renderUnifiedDataTable() {
         ]);
     }
 
+    // Make the most recent row reflect the nowcast (freshest) score, matching
+    // the Current Signals card and the strategy chart's tip. Historical rows
+    // stay strictly lag-aware so the backtest has no look-ahead.
+    if (rows.length) {
+        const cur = Strategy.computeSignals();
+        if (typeof cur.composite === 'number') {
+            const fmt = v => (v === undefined || v === null) ? '' : (v > 0 ? `+${v}` : String(v));
+            const r = rows[rows.length - 1];
+            r[0] = r[0] + ' ⦾';                 // mark date with nowcast glyph
+            r[13] = fmt(cur.trend);
+            r[14] = fmt(cur.unemployment);
+            r[15] = fmt(cur.vix);
+            r[16] = fmt(cur.cape);
+            r[17] = fmt(cur.pie);
+            r[18] = fmt(cur.allocation);
+            r[19] = fmt(cur.yieldCurve);
+            r[20] = fmt(cur.fedPolicy);
+            r[21] = cur.composite.toFixed(1);
+            r[22] = cur.regime || r[22];
+            r[23] = (cur.equityPctBase != null ? cur.equityPctBase : '') + '%';
+        }
+    }
+
     thead.innerHTML = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
     tbody.innerHTML = rows.map(r => {
         const regime = r[22];

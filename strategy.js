@@ -504,10 +504,20 @@ const Strategy = {
 
         monthly.forEach(d => {
             const { score, count } = this.computeLaggedScore(d.date);
-            if (count > 0) timeline.push({ date: d.date, score, price: d.value });
+            if (count > 0) timeline.push({ date: d.date, score, price: d.value, nowcast: false });
         });
 
         if (timeline.length === 0) return;
+
+        // The tip of the line uses nowcast (freshest) data so the most recent
+        // score matches the Current Signals card. Historical points stay
+        // lag-aware (no look-ahead) for backtest integrity.
+        const current = this.computeSignals();
+        if (typeof current.composite === 'number') {
+            const last = timeline[timeline.length - 1];
+            last.score = current.composite;
+            last.nowcast = true;
+        }
 
         Charts.destroy('chart-strategy');
         const ctx = document.getElementById('chart-strategy').getContext('2d');
@@ -518,7 +528,7 @@ const Strategy = {
                 labels: timeline.map(d => d.date),
                 datasets: [
                     {
-                        label: 'Composite Score (lag-aware)',
+                        label: 'Composite Score (lag-aware; latest = nowcast)',
                         data: timeline.map(d => d.score),
                         borderColor: CONFIG.COLORS.yellow,
                         backgroundColor: timeline.map(d =>
@@ -526,7 +536,9 @@ const Strategy = {
                         ),
                         fill: true,
                         borderWidth: 2,
-                        pointRadius: 0,
+                        pointRadius: timeline.map(d => d.nowcast ? 4 : 0),
+                        pointBackgroundColor: timeline.map(d => d.nowcast ? CONFIG.COLORS.nowcast : 'transparent'),
+                        pointBorderColor: timeline.map(d => d.nowcast ? CONFIG.COLORS.nowcast : 'transparent'),
                         stepped: true,
                         yAxisID: 'y',
                     },
