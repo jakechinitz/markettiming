@@ -762,6 +762,8 @@ const DataStore = {
         this.processed.yieldCurve = withMA;
     },
 
+    // Daily effective federal funds rate (DFF). Kept at daily granularity so a
+    // policy change shows up immediately; the data table reduces it to monthly.
     processFedFunds() {
         const data = this.raw.fedFunds || [];
         if (data.length === 0) return;
