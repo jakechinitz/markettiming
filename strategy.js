@@ -259,19 +259,20 @@ const Strategy = {
             signals.yieldCurveDetail = `10Y-2Y spread at ${yc.value.toFixed(2)}%`;
         }
 
-        // 8. Fed policy stance (1-month lag, cross-referenced with inflation + unemployment)
-        const fedFunds = DataStore.processed.fedFunds || [];
-        if (fedFunds.length > 3) {
-            const latest = fedFunds[fedFunds.length - 1];
-            const prior = fedFunds.length > 3 ? fedFunds[fedFunds.length - 4] : null;
+        // 8. Fed policy stance (real-time daily effective rate, cross-referenced
+        //    with inflation + unemployment). The prior-rate lookback is DATE-based
+        //    (3 months), not index-based, so it is correct for daily data.
+        const latestFed = DataStore.getLatest('fedFunds');
+        if (latestFed) {
+            const prior = DataStore.getLaggedValue('fedFunds', latestFed.date, 3);
             const inflRate = (DataStore.getLatest('cpi') || {}).inflationRate;
             const unempData = DataStore.getLatest('unemployment');
             const unempRising = unempData && unempData.ma12 !== null && unempData.value > unempData.ma12;
             const { signal, stance } = this.classifyFedPolicy(
-                latest.value, prior ? prior.value : null, inflRate, unempRising
+                latestFed.value, prior ? prior.value : null, inflRate, unempRising
             );
             signals.fedPolicy = signal;
-            signals.fedPolicyDetail = `Fed Funds ${latest.value.toFixed(2)}%: ${stance}`;
+            signals.fedPolicyDetail = `Fed Funds ${latestFed.value.toFixed(2)}% (as of ${latestFed.date}): ${stance}`;
         }
 
         // Composite score — CAPE/PIE half weight is baked into signal values (±0.5)
@@ -475,7 +476,7 @@ const Strategy = {
             count++;
         }
 
-        // 8. Fed policy (1 month lag — direction + macro context)
+        // 8. Fed policy (real-time daily rate — direction + macro context)
         const fed = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS);
         if (fed) {
             const fedPrior = DataStore.getLaggedValue('fedFunds', dateStr, CONFIG.PUB_LAG.FED_FUNDS + 3);
@@ -757,7 +758,7 @@ const Strategy = {
                 <div class="stat-label">Buy & Hold Final Value</div>
                 <div class="stat-value">$${bhFinal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
             </div>
-            <p class="lag-note">Backtest uses publication-lagged data: S&P/VIX/yield curve real-time, unemployment/Fed Funds 1mo, CPI 2mo, allocation 1mo, CAPE/P-IE 2mo.</p>
+            <p class="lag-note">Backtest uses publication-lagged data: S&P/VIX/yield curve/Fed Funds real-time, unemployment 1mo, CPI 2mo, allocation 1mo, CAPE/P-IE 2mo.</p>
             <p class="lag-note">Advanced toggles: ${activeToggleLabels.length ? activeToggleLabels.join(' | ') : 'None (base model only)'}</p>
         `;
     },

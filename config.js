@@ -21,8 +21,10 @@ const CONFIG = {
         CCSA: 'CCSA',
         // 10-Year minus 2-Year Treasury spread (yield curve)
         T10Y2Y: 'T10Y2Y',
-        // Effective Federal Funds Rate (monthly)
-        FEDFUNDS: 'FEDFUNDS',
+        // Effective Federal Funds Rate — DAILY (DFF, from 1954). Daily so a
+        // rate change registers the day after an FOMC decision; the monthly
+        // FEDFUNDS average lagged a hike by ~1.5–2 months.
+        FEDFUNDS: 'DFF',
     },
 
     // Publication lags in months (how long after the reference period
@@ -36,7 +38,7 @@ const CONFIG = {
         CAPE: 2,        // derived from S&P + CPI, so limited by CPI lag
         YIELD_CURVE: 0, // real-time daily data
         PIE: 2,         // same lag structure as CAPE (valuation uses CPI/earnings)
-        FED_FUNDS: 1,   // effective rate published ~1 month after reference month
+        FED_FUNDS: 0,   // daily effective rate is observable next business day; FOMC decisions are public immediately
     },
 
     // Chart colors
